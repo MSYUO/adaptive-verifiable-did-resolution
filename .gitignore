@@ -11,3 +11,7 @@ __pycache__/
 # if it were curated evidence.
 telemetry/
 artifacts/
+
+# Frozen model binaries are regenerated; their METADATA (json, with the
+# artifact hash) is tracked so the frozen identity is committed.
+frozen/*.pkl

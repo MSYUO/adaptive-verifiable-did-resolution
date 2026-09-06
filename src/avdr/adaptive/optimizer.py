@@ -22,7 +22,8 @@ Honesty rules enforced here:
   * If no subset meets the target, that is reported as
     SLO_ESTIMATE_UNSATISFIABLE. The optimizer never quietly falls back to
     "call everything" and then claims the SLO was met.
-  * Subsets the estimator cannot score are reported, never imputed.
+  * Subsets the estimator cannot score are reported, never imputed, and by
+    default they BLOCK the exact-minimum claim entirely (see below).
   * Selection is fully deterministic; ties are broken by a fixed documented
     rule, never at random.
 """
@@ -49,6 +50,26 @@ SELECTED = "SELECTED"
 SLO_ESTIMATE_UNSATISFIABLE = "SLO_ESTIMATE_UNSATISFIABLE"
 ADAPTIVE_CANDIDATE_LIMIT_EXCEEDED = "ADAPTIVE_CANDIDATE_LIMIT_EXCEEDED"
 NO_ELIGIBLE_CANDIDATES = "NO_ELIGIBLE_CANDIDATES"
+ESTIMATOR_COVERAGE_INCOMPLETE = "ESTIMATOR_COVERAGE_INCOMPLETE"
+
+# Coverage modes.
+#
+# REQUIRE_COMPLETE (default): every non-empty subset of the candidate set must
+# have a valid estimate. Anything less cannot support an exact-minimum claim.
+#
+#   Counterexample that motivates this. target = 0.95,
+#       q({A})   = unknown
+#       q({B})   = 0.80
+#       q({A,B}) = 0.99
+#   Selecting {A,B} is NOT minimum: the unknown q({A}) could be >= 0.95, in
+#   which case the true minimum is the cheaper {A}. Optimising over "the
+#   subsets we happen to know" silently answers a different question.
+#
+# PARTIAL_BEST_KNOWN: opt-in, returns the cheapest subset among those that
+# were estimated. Its result is explicitly NOT minimum, NOT optimal and NOT
+# SLO-guaranteed, and the wording in `selection_reason` says so.
+REQUIRE_COMPLETE = "require-complete"
+PARTIAL_BEST_KNOWN = "partial-best-known"
 
 # Tie-break rule, fixed before execution. Documented in README.
 TIE_BREAK_RULE = (
@@ -128,6 +149,14 @@ class OptimizerResult:
     evaluated_subset_count: int
     unestimated_subset_count: int = 0
 
+    coverage_mode: str = REQUIRE_COMPLETE
+    expected_subset_count: int = 0
+    estimated_subset_count: int = 0
+    missing_subsets: list[list[str]] = field(default_factory=list)
+    # True only when every non-empty subset had a valid estimate. An exact
+    # minimum may be claimed only when this is True.
+    exact: bool = False
+
     selected_subset: list[str] | None = None
     selected_subset_size: int | None = None
     selected_cost: float | None = None
@@ -158,6 +187,11 @@ class OptimizerResult:
             "candidate_count": self.candidate_count,
             "evaluated_subset_count": self.evaluated_subset_count,
             "unestimated_subset_count": self.unestimated_subset_count,
+            "coverage_mode": self.coverage_mode,
+            "expected_subset_count": self.expected_subset_count,
+            "estimated_subset_count": self.estimated_subset_count,
+            "missing_subsets": self.missing_subsets,
+            "exact": self.exact,
             "selected_subset": self.selected_subset,
             "selected_subset_size": self.selected_subset_size,
             "selection_cost": self.selected_cost,
@@ -189,9 +223,13 @@ class MinimumSetOptimizer:
         self,
         cost_model: CostModel | None = None,
         max_candidates: int = MAX_ADAPTIVE_CANDIDATES,
+        coverage_mode: str = REQUIRE_COMPLETE,
     ) -> None:
         self.cost_model = cost_model or CardinalityCost()
         self.max_candidates = max_candidates
+        if coverage_mode not in (REQUIRE_COMPLETE, PARTIAL_BEST_KNOWN):
+            raise ValueError(f"unknown coverage_mode {coverage_mode!r}")
+        self.coverage_mode = coverage_mode
 
     def select(
         self,
@@ -232,8 +270,10 @@ class MinimumSetOptimizer:
                 cost_model_id=self.cost_model.cost_model_id,
             )
 
+        expected_subset_count = 2 ** len(providers) - 1
         evaluations: list[SubsetEvaluation] = []
         unestimated = 0
+        missing: list[list[str]] = []
 
         for size in range(1, len(providers) + 1):
             for combo in combinations(providers, size):
@@ -242,6 +282,7 @@ class MinimumSetOptimizer:
                 if raw is None:
                     # Unknown stays unknown. No composition rule is applied.
                     unestimated += 1
+                    missing.append(list(key))
                     evaluations.append(SubsetEvaluation(key, None, None, False))
                     continue
                 q_hat = validate_probability(raw, f"q_hat({','.join(key)})")
@@ -265,12 +306,31 @@ class MinimumSetOptimizer:
             candidate_count=len(providers),
             evaluated_subset_count=len(evaluations),
             unestimated_subset_count=unestimated,
+            coverage_mode=self.coverage_mode,
+            expected_subset_count=expected_subset_count,
+            estimated_subset_count=len(scored),
+            missing_subsets=missing,
+            exact=not missing,
             best_subset=list(best.subset) if best else None,
             best_probability=best.q_hat if best else None,
             optimizer_version=self.version,
             cost_model_id=self.cost_model.cost_model_id,
             evaluations=evaluations,
         )
+
+        # ---- coverage gate -------------------------------------------------
+        # An exact minimum cannot be claimed while any subset is unscored: an
+        # unknown cheaper subset might have satisfied the target.
+        if missing and self.coverage_mode == REQUIRE_COMPLETE:
+            result.status = ESTIMATOR_COVERAGE_INCOMPLETE
+            result.selection_reason = (
+                f"{len(missing)} of {expected_subset_count} non-empty subsets "
+                f"have no estimate ({missing[:4]}"
+                f"{'...' if len(missing) > 4 else ''}); refusing to claim an "
+                f"exact minimum, because an unscored cheaper subset could "
+                f"itself have satisfied the target"
+            )
+            return result
 
         if not feasible:
             result.status = SLO_ESTIMATE_UNSATISFIABLE
@@ -300,6 +360,7 @@ class MinimumSetOptimizer:
 
         # Deterministic selection. See TIE_BREAK_RULE.
         chosen = min(feasible, key=lambda e: (e.cost, -e.q_hat, e.subset))
+        partial = bool(missing) and self.coverage_mode == PARTIAL_BEST_KNOWN
         tied = [
             e for e in feasible if e.cost == chosen.cost and e.q_hat == chosen.q_hat
         ]
@@ -308,14 +369,25 @@ class MinimumSetOptimizer:
         result.selected_subset_size = len(chosen.subset)
         result.selected_cost = chosen.cost
         result.estimated_subset_success = chosen.q_hat
-        result.selection_reason = (
-            f"minimum-cost subset meeting target {target}: cost={chosen.cost}, "
-            f"q_hat={chosen.q_hat}"
-            + (
-                f"; {len(tied)} subsets tied on cost and q_hat, broken "
-                f"lexicographically"
-                if len(tied) > 1
-                else ""
-            )
+        tie_note = (
+            f"; {len(tied)} subsets tied on cost and q_hat, broken "
+            f"lexicographically"
+            if len(tied) > 1
+            else ""
         )
+        if partial:
+            # Deliberately avoids the words minimum / optimal / guaranteed.
+            result.selection_reason = (
+                f"PARTIAL-COVERAGE BEST KNOWN subset meeting target {target}: "
+                f"cost={chosen.cost}, q_hat={chosen.q_hat}. "
+                f"{len(missing)} of {expected_subset_count} subsets were "
+                f"unscored, so this is the cheapest subset AMONG THOSE "
+                f"ESTIMATED. It is not established as the smallest satisfying "
+                f"subset and carries no SLO assurance" + tie_note
+            )
+        else:
+            result.selection_reason = (
+                f"minimum-cost subset meeting target {target}: cost={chosen.cost}, "
+                f"q_hat={chosen.q_hat}" + tie_note
+            )
         return result

@@ -29,8 +29,10 @@ from avdr.adaptive.estimator import (
 )
 from avdr.adaptive.optimizer import (
     ADAPTIVE_CANDIDATE_LIMIT_EXCEEDED,
+    ESTIMATOR_COVERAGE_INCOMPLETE,
     NO_ELIGIBLE_CANDIDATES,
     OPTIMIZER_VERSION,
+    PARTIAL_BEST_KNOWN,
     SELECTED,
     SLO_ESTIMATE_UNSATISFIABLE,
     CardinalityCost,
@@ -143,11 +145,11 @@ def test_uncovered_subset_returns_none_not_a_composed_value():
 def test_optimizer_does_not_synthesise_missing_subsets():
     est = ControlledTableEstimator({("a",): 0.5, ("b",): 0.5})
     result = MinimumSetOptimizer().select(["a", "b"], est, 0.9)
-    assert result.status == SLO_ESTIMATE_UNSATISFIABLE
-    # {a,b} was evaluated but had no estimate; it was NOT composed to 0.75.
+    # {a,b} has no estimate; it was NOT composed to 1-(0.5*0.5)=0.75.
     assert result.unestimated_subset_count == 1
     assert result.evaluated_subset_count == 3
-    assert result.best_probability == 0.5
+    assert result.missing_subsets == [["a", "b"]]
+    assert result.exact is False
 
 
 def test_independence_formula_absent_from_source():
@@ -280,21 +282,35 @@ def test_best_effort_degradation_is_tagged_and_does_not_claim_the_slo(k_estimato
 # ==========================================================================
 
 
+def complete_table(values: dict) -> ControlledTableEstimator:
+    """Build a fully covered table so the coverage gate is satisfied."""
+    return ControlledTableEstimator(values)
+
+
 def test_tie_break_prefers_higher_q_hat_at_equal_cost():
-    est = ControlledTableEstimator({("a",): 0.97, ("b",): 0.99, ("c",): 0.98})
+    est = complete_table({
+        ("a",): 0.97, ("b",): 0.99, ("c",): 0.98,
+        ("a", "b"): 0.999, ("a", "c"): 0.999, ("b", "c"): 0.999,
+        ("a", "b", "c"): 0.9999,
+    })
     result = MinimumSetOptimizer().select(["a", "b", "c"], est, 0.95)
+    assert result.exact is True
     assert result.selected_subset == ["b"]
 
 
 def test_tie_break_is_lexicographic_when_cost_and_q_hat_tie():
-    est = ControlledTableEstimator({("a",): 0.99, ("b",): 0.99, ("c",): 0.99})
+    est = complete_table({
+        ("a",): 0.99, ("b",): 0.99, ("c",): 0.99,
+        ("a", "b"): 0.999, ("a", "c"): 0.999, ("b", "c"): 0.999,
+        ("a", "b", "c"): 0.9999,
+    })
     result = MinimumSetOptimizer().select(["c", "b", "a"], est, 0.95)
     assert result.selected_subset == ["a"]
     assert "tied on cost and q_hat" in result.selection_reason
 
 
 def test_selection_is_repeatable():
-    est = ControlledTableEstimator({("a",): 0.99, ("b",): 0.99})
+    est = complete_table({("a",): 0.99, ("b",): 0.99, ("a", "b"): 0.999})
     optimizer = MinimumSetOptimizer()
     picks = {
         tuple(optimizer.select(["a", "b"], est, 0.9).selected_subset)
@@ -304,12 +320,62 @@ def test_selection_is_repeatable():
 
 
 def test_cost_model_is_pluggable():
-    est = ControlledTableEstimator({("a",): 0.99, ("b",): 0.99})
+    est = complete_table({("a",): 0.99, ("b",): 0.99, ("a", "b"): 0.999})
     weighted = MinimumSetOptimizer(cost_model=WeightedCost({"a": 5.0, "b": 1.0}))
     result = weighted.select(["a", "b"], est, 0.9)
     # Cardinality would pick "a" lexicographically; weights pick "b".
     assert result.selected_subset == ["b"]
     assert result.cost_model_id == "weighted-v1"
+
+
+# ---- incomplete-coverage semantics (milestone correction) ----------------
+
+
+def test_incomplete_coverage_blocks_exact_minimum_claim():
+    """The counterexample from the milestone brief.
+
+    q({A}) unknown, q({B})=0.80, q({A,B})=0.99, target 0.95. Selecting {A,B}
+    would NOT be minimum: the unknown q({A}) could itself be >= 0.95.
+    """
+    est = ControlledTableEstimator({("B",): 0.80, ("A", "B"): 0.99})
+    result = MinimumSetOptimizer().select(["A", "B"], est, 0.95)
+
+    assert result.status == ESTIMATOR_COVERAGE_INCOMPLETE
+    assert result.selected_subset is None
+    assert result.exact is False
+    assert result.expected_subset_count == 3
+    assert result.estimated_subset_count == 2
+    assert result.missing_subsets == [["A"]]
+    assert "exact minimum" in result.selection_reason
+
+
+def test_complete_coverage_permits_exact_claim():
+    est = complete_table({("A",): 0.90, ("B",): 0.80, ("A", "B"): 0.99})
+    result = MinimumSetOptimizer().select(["A", "B"], est, 0.95)
+    assert result.status == SELECTED
+    assert result.exact is True
+    assert result.missing_subsets == []
+    assert result.selected_subset == ["A", "B"]
+
+
+def test_partial_best_known_mode_never_claims_optimality():
+    est = ControlledTableEstimator({("B",): 0.80, ("A", "B"): 0.99})
+    result = MinimumSetOptimizer(coverage_mode=PARTIAL_BEST_KNOWN).select(
+        ["A", "B"], est, 0.95
+    )
+    assert result.status == SELECTED
+    assert result.selected_subset == ["A", "B"]
+    assert result.exact is False
+    reason = result.selection_reason.lower()
+    assert "best known" in reason
+    for forbidden in ("minimum-cost", "optimal", "guaranteed"):
+        assert forbidden not in reason
+    assert "not established as the smallest" in reason
+
+
+def test_unknown_coverage_mode_rejected():
+    with pytest.raises(ValueError, match="unknown coverage_mode"):
+        MinimumSetOptimizer(coverage_mode="whatever")
 
 
 # ==========================================================================
@@ -661,3 +727,17 @@ def test_adaptive_policy_raises_typed_planning_error():
         policy.plan([local_entry("local-a", "http://127.0.0.1:1")], DID)
     assert excinfo.value.status == SLO_ESTIMATE_UNSATISFIABLE
     assert excinfo.value.result.best_probability == 0.5
+
+
+def test_adaptive_policy_surfaces_incomplete_coverage():
+    est = ControlledTableEstimator({("local-a",): 0.99})  # pair left unscored
+    policy = RealAdaptiveMinSet(estimator=est, default_target=0.95)
+    with pytest.raises(AdaptivePlanningError) as excinfo:
+        policy.plan(
+            [
+                local_entry("local-a", "http://127.0.0.1:1"),
+                local_entry("local-b", "http://127.0.0.1:2"),
+            ],
+            DID,
+        )
+    assert excinfo.value.status == ESTIMATOR_COVERAGE_INCOMPLETE
