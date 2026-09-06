@@ -17,6 +17,8 @@ from pathlib import Path
 
 from .models import (
     LogicalRequestRecord,
+    RealProviderObservation,
+    RealProviderTrialRecord,
     ResolverAttempt,
     ShadowObservation,
     ShadowTrialRecord,
@@ -29,6 +31,12 @@ ATTEMPTS_FILENAME = "attempts.jsonl"
 # two must never be pooled into one dataset.
 SHADOW_TRIALS_FILENAME = "shadow_trials.jsonl"
 SHADOW_OBSERVATIONS_FILENAME = "shadow_observations.jsonl"
+# Real-provider qualification records, again kept apart: these come from live
+# third-party endpoints, not from controlled local resolvers.
+REAL_TRIALS_FILENAME = "real_provider_trials.jsonl"
+REAL_OBSERVATIONS_FILENAME = "real_provider_observations.jsonl"
+# Exact response bodies, preserved outside the normalized records for audit.
+RAW_RESPONSES_FILENAME = "raw_responses.jsonl"
 
 
 class TelemetrySink:
@@ -56,6 +64,18 @@ class TelemetrySink:
     @property
     def shadow_observations_path(self) -> Path:
         return self.directory / SHADOW_OBSERVATIONS_FILENAME
+
+    @property
+    def real_trials_path(self) -> Path:
+        return self.directory / REAL_TRIALS_FILENAME
+
+    @property
+    def real_observations_path(self) -> Path:
+        return self.directory / REAL_OBSERVATIONS_FILENAME
+
+    @property
+    def raw_responses_path(self) -> Path:
+        return self.directory / RAW_RESPONSES_FILENAME
 
     def _append(self, path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,6 +133,44 @@ class TelemetrySink:
     def record_shadow_trial(self, trial: ShadowTrialRecord) -> None:
         with self._lock:
             self._append(self.shadow_trials_path, trial.model_dump(mode="json"))
+
+    def record_real_observation(self, observation: RealProviderObservation) -> None:
+        with self._lock:
+            self._append(
+                self.real_observations_path, observation.model_dump(mode="json")
+            )
+
+    def record_real_trial(self, trial: RealProviderTrialRecord) -> None:
+        with self._lock:
+            self._append(self.real_trials_path, trial.model_dump(mode="json"))
+
+    def record_raw_response(
+        self,
+        *,
+        experiment_id: str,
+        trial_id: str,
+        provider_id: str,
+        raw_response_hash: str | None,
+        body: object,
+    ) -> None:
+        """Preserve the exact parsed body for later audit.
+
+        Kept out of the normalized observation so the trace stays small, but
+        never discarded: a later reviewer must be able to re-derive any
+        normalization decision from what the provider actually returned.
+        """
+        with self._lock:
+            self._append(
+                self.raw_responses_path,
+                {
+                    "record_type": "raw_response",
+                    "experiment_id": experiment_id,
+                    "trial_id": trial_id,
+                    "provider_id": provider_id,
+                    "raw_response_hash": raw_response_hash,
+                    "body": body,
+                },
+            )
 
     def counts(self) -> dict[str, int]:
         with self._lock:

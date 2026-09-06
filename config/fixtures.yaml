@@ -1,0 +1,102 @@
+# Real DID fixtures used for compatibility qualification.
+#
+# Every fixture records where the DID came from and what may be assumed about
+# its persistence. Fixtures that depend on third-party hosting are marked as
+# such: they can change or disappear without notice, and a future failure to
+# resolve them is a fixture problem, not necessarily a resolver problem.
+#
+# No fixture in this milestone requires a paid transaction, a mainnet write,
+# or any credential.
+
+manifest_version: "2026-09-07-a"
+
+fixtures:
+  - fixture_id: key-ed25519-1
+    did: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+    did_method: key
+    expected_subject: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+    source: >-
+      Standard Ed25519 did:key example value that appears widely in did:key
+      documentation and Universal Resolver examples. Used here as a
+      deterministic control fixture.
+    project_controlled: false
+    externally_hosted: false
+    persistence_assumption: >-
+      Deterministic. did:key resolution is a pure function of the identifier:
+      no ledger, no network lookup, no hosting dependency. This fixture
+      cannot "go stale" and is the strongest control case in the ladder.
+    expected_outcome: resolvable
+
+  - fixture_id: web-danubetech
+    did: "did:web:danubetech.com"
+    did_method: web
+    expected_subject: "did:web:danubetech.com"
+    source: >-
+      Public did:web identifier of Danube Tech, observed resolvable via the
+      DIF Universal Resolver on 2026-09-07.
+    project_controlled: false
+    externally_hosted: true
+    persistence_assumption: >-
+      DEPENDS ON A THIRD PARTY. Resolution requires fetching
+      https://danubetech.com/.well-known/did.json at request time. The domain
+      owner may change or remove it at any time, and resolution also depends
+      on DNS and TLS reachability from the resolver, not from this client. A
+      future failure here is not evidence about resolver quality.
+    project_control_note: >-
+      A project-controlled did:web fixture was NOT created: it would require
+      publishing a document on a public domain owned by this project, which
+      is out of scope for this milestone.
+    expected_outcome: resolvable
+
+  - fixture_id: ethr-default-doc
+    did: "did:ethr:0xb9c5714089478a327f09197987f16f9e5d936e8a"
+    did_method: ethr
+    expected_subject: "did:ethr:0xb9c5714089478a327f09197987f16f9e5d936e8a"
+    source: >-
+      A well-formed Ethereum address used as a did:ethr identifier. No claim
+      is made that this address is controlled by anyone in particular, and no
+      transaction was created for it.
+    project_controlled: false
+    externally_hosted: true
+    persistence_assumption: >-
+      Observed on 2026-09-07 to return the DETERMINISTIC DEFAULT document
+      derived from the address (a single EcdsaSecp256k1RecoveryMethod2020
+      verification method, empty didDocumentMetadata), i.e. no on-chain DID
+      events. Resolution still traverses the resolver's configured Ethereum
+      RPC provider, so it depends on that upstream being reachable. If DID
+      events were ever published for this address the document would change.
+    expected_outcome: resolvable
+
+  # ---------------- controlled negative cases ----------------
+  - fixture_id: unsupported-method
+    did: "did:avdrnotamethod:qualification"
+    did_method: avdrnotamethod
+    expected_subject: null
+    source: >-
+      Synthetic identifier using a DID method that does not exist, chosen so
+      the resolver must reject it by method routing alone.
+    project_controlled: true
+    externally_hosted: false
+    persistence_assumption: >-
+      Deterministic negative case. Observed to return HTTP 501 with
+      didResolutionMetadata.error.type = METHOD_NOT_SUPPORTED, without any
+      external network dependency on the resolver's side.
+    expected_outcome: unresolvable
+    expected_error_family: methodNotSupported
+
+  - fixture_id: web-unresolvable
+    did: "did:web:avdr-nonexistent-qualification.invalid"
+    did_method: web
+    expected_subject: null
+    source: >-
+      Synthetic did:web under the reserved .invalid TLD (RFC 2606), which is
+      guaranteed never to resolve in the DNS.
+    project_controlled: true
+    externally_hosted: false
+    persistence_assumption: >-
+      Deterministic negative case at the DNS level. Observed to return HTTP
+      404 with didResolutionMetadata.error.type = NOT_FOUND. Note the failure
+      is produced by the RESOLVER's DNS lookup, so the exact error detail is
+      resolver-dependent.
+    expected_outcome: unresolvable
+    expected_error_family: notFound

@@ -117,6 +117,12 @@ class Provenance(BaseModel):
     config_hash: str | None = None
     injection_config_hash: str | None = None
 
+    # Real-provider qualification provenance.
+    provider_inventory_hash: str | None = None
+    fixture_manifest_hash: str | None = None
+    acceptance_profile: str | None = None
+    dependency_lock_hash: str | None = None
+
     # field name -> why it could not be resolved. Empty when all resolved.
     unresolved: dict[str, str] = Field(default_factory=dict)
 
@@ -134,6 +140,8 @@ class Provenance(BaseModel):
             self.git_commit,
             self.config_hash,
             self.injection_config_hash,
+            self.provider_inventory_hash,
+            self.fixture_manifest_hash,
         )
 
 

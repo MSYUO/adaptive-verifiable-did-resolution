@@ -1,0 +1,191 @@
+# Real DID resolver provider inventory / compatibility matrix.
+#
+# Compiled 2026-09-07 from official documentation plus direct probing of the
+# live endpoints. Every field is either sourced from documentation (see
+# `source`) or marked as observed by probe.
+#
+# INDEPENDENCE WARNING -- read before using this file to argue anything.
+# Distinct endpoints are NOT distinct implementations, and distinct
+# implementations are NOT statistically independent providers. Two of the
+# entries below are operated by the same organisation and run the same
+# upstream codebase. `independence_notes` records what is actually known.
+# No independence claim may be derived from this file.
+#
+# Rate limits: no rate limit is stated in the universal-resolver README or
+# docs/dev-system.md. A limit IS enforced and is disclosed only in the 403
+# response body, observed on 2026-09-07:
+#
+#   "You have reached the limits of your free Godiddy account. Too many
+#    Universal Resolver requests. Only 10 requests are allowed per 1800
+#    seconds. Remove this limit by signing up for Godiddy at
+#    https://godiddy.com/pricing."
+#
+# That budget (10 requests / 1800 s, anonymous) is enforced by the
+# qualification script, which refuses to exceed it.
+
+inventory_version: "2026-09-07-a"
+
+providers:
+  - id: uniresolver-dif-dev
+    implementation_id: dif-universal-resolver
+    implementation_notes: >-
+      DIF Universal Resolver (uni-resolver-web). For did:key this deployment
+      routes to the "driver-didkit" driver, per the driverUrl field observed
+      in didResolutionMetadata.
+    operator: "Decentralized Identity Foundation (DIF)"
+    endpoint: "https://dev.uniresolver.io"
+    adapter: universal-resolver-v1
+    auth_required: false
+    credentials_available: null
+    supported_did_methods: [key, web, ethr]
+    response_media_type: "application/did-resolution"
+    full_resolution_result: true
+    rate_limit_documented: true
+    rate_limit_requests: 10
+    rate_limit_window_seconds: 1800
+    rate_limit_notes: >-
+      OBSERVED 2026-09-07: anonymous use is capped at 10 Universal Resolver
+      requests per 1800 seconds; exceeding it returns HTTP 403 with a JSON
+      body naming the limit. The limit is NOT stated in the project README or
+      dev-system docs, only in the 403 response. No Retry-After header is
+      sent. Documented as an experimental testing instance, explicitly not a
+      production service.
+    terms_notes: >-
+      Public, unauthenticated, intended for testing. Must not be load-tested.
+      Hard request budget enforced by the qualification script.
+    source: "https://github.com/decentralized-identity/universal-resolver"
+    available: true
+    independence_notes: >-
+      Shares IP 109.70.102.245 with uniresolver.io (observed via DNS), so
+      those two hostnames are the SAME deployment. CRITICALLY: the 403 body
+      identifies the backend as a "free Godiddy account" and the internal
+      path as /1.0.0/universal-resolver/..., so this endpoint appears to be
+      SERVED BY GODIDDY infrastructure. dev.uniresolver.io and the godiddy
+      entry below must therefore NOT be treated as independent providers.
+
+  - id: uniresolver-dif-identity-foundation
+    implementation_id: dif-universal-resolver
+    implementation_notes: >-
+      DIF Universal Resolver, separate deployment. Observed driver routing is
+      also "driver-didkit", but the driver pattern differs from the dev
+      deployment (this one additionally matches did:tz), indicating a
+      different deployed version/configuration.
+    operator: "Decentralized Identity Foundation (DIF)"
+    endpoint: "https://resolver.identity.foundation"
+    adapter: universal-resolver-v1
+    auth_required: false
+    credentials_available: null
+    supported_did_methods: [key, web, ethr]
+    response_media_type: "application/did-resolution"
+    full_resolution_result: true
+    rate_limit_documented: false
+    rate_limit_notes: >-
+      No published limit found. Fronted by Cloudflare (observed `server:
+      cloudflare` and cf-ray headers), so upstream throttling may exist and
+      is not documented. Conservative pacing applied.
+    terms_notes: "Public, unauthenticated. Must not be load-tested."
+    source: "https://github.com/decentralized-identity/universal-resolver"
+    available: false
+    unavailable_reason: >-
+      OBSERVED DOWN during qualification on 2026-09-07. Returned HTTP 502 with
+      a 6474-byte Cloudflare HTML error page on 8/8 qualification requests and
+      on 4/4 subsequent confirmation probes. NOTE: this same endpoint WAS
+      reachable earlier in the same session (HTTP 200, full DID Resolution
+      Result, driver pattern including did:tz), which is how its capabilities
+      above were determined; the outage began mid-session. It is marked
+      unavailable so it is not counted as a working provider, not because it
+      is unsupported. Its failing observations are retained in the
+      telemetry as evidence.
+    independence_notes: >-
+      Distinct DEPLOYMENT from uniresolver-dif-dev (different IPs, different
+      driver pattern, Cloudflare-fronted) but SAME operator (DIF) and SAME
+      upstream implementation. Not an independent implementation.
+
+  - id: selfhosted-driver-did-key
+    implementation_id: universalresolver-driver-did-key
+    implementation_notes: >-
+      Self-hosted standalone uni-resolver driver container. Observed to be a
+      DIFFERENT driver implementation from the driver-didkit used by the DIF
+      deployments: it returns JsonWebKey2020 verification methods and the
+      jws-2020 context, and includes capabilityDelegation /
+      capabilityInvocation, where driver-didkit returns
+      Ed25519VerificationKey2018 and omits those relationships.
+    operator: "self-hosted (this project)"
+    endpoint: "http://127.0.0.1:8101"
+    adapter: did-document-only-v1
+    auth_required: false
+    credentials_available: null
+    supported_did_methods: [key]
+    response_media_type: 'application/ld+json;profile="https://w3id.org/did-resolution"'
+    full_resolution_result: false
+    full_resolution_result_notes: >-
+      Returns only a didDocument key. No didResolutionMetadata and no
+      didDocumentMetadata, because this is a driver rather than a full
+      resolver front end. The adapter must synthesise absent metadata as
+      explicitly null, never invent it.
+    container_image: "universalresolver/driver-did-key:latest"
+    container_image_digest: "sha256:f046dfec52ba6cadbc17fedc48e90c65ff43c81a11fdcbf44bb8484de6fa6698"
+    rate_limit_documented: false
+    rate_limit_notes: "Self-hosted; no external limit. Still not load-tested."
+    terms_notes: "Public Docker image, run locally."
+    source: "https://hub.docker.com/r/universalresolver/driver-did-key"
+    available: true
+    independence_notes: >-
+      Distinct driver implementation from the DIF deployments, but it runs on
+      the SAME host as this measurement client, so its latency is not
+      comparable with the public endpoints and it shares no network path
+      with them. Same upstream umbrella project (DIF universal-resolver).
+
+  # ------------------------------------------------------------------
+  # Not usable in this milestone. Listed so the exclusion is auditable.
+  # ------------------------------------------------------------------
+  - id: godiddy
+    implementation_id: danubetech-godiddy
+    implementation_notes: >-
+      Hosted platform by Danube Tech built on the Universal Resolver /
+      Universal Registrar open-source projects.
+    operator: "Danube Tech"
+    endpoint: "https://api.godiddy.com"
+    adapter: universal-resolver-v1
+    auth_required: true
+    auth_scheme: "Authorization: Bearer <api key>"
+    credentials_available: false
+    supported_did_methods: []
+    response_media_type: null
+    full_resolution_result: null
+    rate_limit_documented: null
+    rate_limit_notes: "Not assessed; no account."
+    terms_notes: "Requires an API key. No key is available in this environment."
+    source: "https://docs.godiddy.com/en/apis/universal-resolver"
+    available: false
+    unavailable_reason: >-
+      Authentication required and no credentials are available in this
+      environment. Per the milestone rules this provider is marked
+      unavailable rather than worked around. No key is stored in this repo.
+    independence_notes: >-
+      Different operator on paper, but built on the same upstream Universal
+      Resolver project AND -- per the 403 body returned by dev.uniresolver.io
+      naming a "free Godiddy account" -- apparently the same backend that
+      serves dev.uniresolver.io. Adding Godiddy as a second provider would
+      therefore probably NOT have produced provider independence.
+
+  - id: uniresolver-io
+    implementation_id: dif-universal-resolver
+    operator: "Decentralized Identity Foundation (DIF)"
+    endpoint: "https://uniresolver.io"
+    adapter: universal-resolver-v1
+    auth_required: false
+    credentials_available: null
+    supported_did_methods: [key, web, ethr]
+    response_media_type: "application/did-resolution"
+    full_resolution_result: true
+    rate_limit_documented: false
+    rate_limit_notes: "See uniresolver-dif-dev; same deployment."
+    terms_notes: "Public, unauthenticated."
+    source: "https://github.com/decentralized-identity/universal-resolver"
+    available: false
+    unavailable_reason: >-
+      EXCLUDED AS NON-DISTINCT. Resolves to the same IP (109.70.102.245) as
+      dev.uniresolver.io and returns an identical driver pattern. Counting it
+      as a separate provider would fabricate provider diversity.
+    independence_notes: "Same deployment as uniresolver-dif-dev."

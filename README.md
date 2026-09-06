@@ -3,13 +3,17 @@
 Local engineering prototype of a DID resolution router that returns the first
 **acceptable** response rather than merely the first response.
 
-> **Scope so far: multi-resolver baseline routing + controlled fault injection,
-> then measurement-apparatus qualification.** There is deliberately no machine
-> learning, no adaptive fan-out sizing (`adaptive-k`), no racing *in the
-> routing path*, no blockchain and no connection to any real DID provider.
-> Those belong to later phases. The one component that contacts every resolver
-> at once is the shadow harness, which is a measurement instrument and never
-> serves a request.
+> **Scope so far:** multi-resolver baseline routing + controlled fault
+> injection → measurement-apparatus qualification → real DID resolver
+> compatibility qualification. There is deliberately no machine learning, no
+> adaptive fan-out sizing (`adaptive-k`), no racing *in the routing path*, and
+> no blockchain. Those belong to later phases.
+>
+> Real public DID resolvers **are** now contacted, but only by the
+> compatibility qualification script and only to prove that the
+> adapter / normalization / acceptance / provenance path works. The components
+> that contact every resolver at once are measurement instruments; they are
+> never routing policies and never serve a request.
 
 ---
 
@@ -68,7 +72,14 @@ Concretely:
 | `config/resolvers.yaml` | Resolver registry and router settings |
 | `config/scenarios.yaml` | Reproducible fault-injection scenario definitions |
 | `scripts/e2e_smoke.py` | E2E qualification against docker compose |
+| `src/avdr/inventory.py` | Provider inventory + DID fixture manifest loaders |
+| `src/avdr/adapters.py` | Real provider adapters -> one normalized model |
+| `src/avdr/profiles.py` | Versioned acceptance profiles (`w3c-basic-v1`) |
+| `src/avdr/real_shadow.py` | Multi-provider real shadow harness (measurement only) |
+| `config/providers.yaml` | Real provider compatibility matrix |
+| `config/fixtures.yaml` | Real DID fixtures with documented provenance |
 | `scripts/measurement_qualification.py` | Measurement-apparatus qualification |
+| `scripts/real_did_qualification.py` | Real DID resolver compatibility qualification |
 
 Policy logic is kept free of HTTP concerns, and the router holds no
 scenario/fault knowledge: injected behaviour belongs to the resolvers.
@@ -278,6 +289,13 @@ traffic (see *Measurement harness* below):
 - `shadow_trials.jsonl` — one line per **shadow trial**
 - `shadow_observations.jsonl` — one line per **resolver observation**
 
+Real-provider qualification adds three more, again kept separate because they
+come from live third-party endpoints rather than controlled local resolvers:
+
+- `real_provider_trials.jsonl` — one line per **real multi-provider trial**
+- `real_provider_observations.jsonl` — one line per **provider observation**
+- `raw_responses.jsonl` — the exact bodies, preserved for audit
+
 One logical request may contain several attempts under failover; conflating
 the two would corrupt any later fan-out or burden analysis.
 
@@ -390,6 +408,88 @@ This phase validates the apparatus; it is not a characterization experiment.
 
 ---
 
+## Real DID resolver compatibility
+
+`src/avdr/real_shadow.py` extends the measurement-only discipline to real
+resolver endpoints. It is **not** a routing policy either.
+
+### Provider inventory (`config/providers.yaml`)
+
+Records, per provider: endpoint, adapter, auth requirement, supported methods,
+media type, whether a full DID Resolution Result is returned, rate-limit
+information, terms, and an explicit `independence_notes` field.
+
+**Distinct endpoints are not distinct implementations, and distinct
+implementations are not independent providers.** Two hostnames that resolve to
+one IP are one deployment. Two deployments of the same codebase are one
+implementation. The inventory records what is actually known and excludes
+non-distinct or unavailable entries with a stated reason rather than inflating
+the provider count.
+
+### Adapters
+
+| Adapter | Shape |
+| --- | --- |
+| `universal-resolver-v1` | Full `{didResolutionMetadata, didDocument, didDocumentMetadata}` |
+| `did-document-only-v1` | Bare driver response carrying only `didDocument` |
+
+Provider-specific knowledge lives only in adapters. Absent metadata is recorded
+as `null` — "this provider did not supply it" — and is **never synthesised** to
+make providers look alike. Route/driver details are kept as
+`provider_route_metadata`, separate from DID semantics.
+
+### Acceptance profile `w3c-basic-v1`
+
+Structural only. Each check is recorded separately and `accepted` is derived
+from them:
+
+`transport_success` · `media_type_processable` · `body_parseable` ·
+`no_resolution_error` · `did_document_present` ·
+`did_document_id_matches_request` · `structurally_processable`
+
+A passing result is **"structurally acceptable under w3c-basic-v1"** — never
+"verified" or "cryptographically verified". No signature, proof, key-material,
+freshness or cross-provider agreement check is performed.
+
+### Connection modes
+
+| Mode | Meaning |
+| --- | --- |
+| `new-client` | Fresh `AsyncClient` and pool per trial. **Not "cold":** OS/DNS caches and platform TLS session reuse are not flushed. |
+| `reused-client` | One client across trials; keep-alive and pooled TLS reused. |
+
+The label deliberately avoids the word "cold" because true cold TCP/TLS
+semantics cannot be guaranteed here. Modes are never mixed inside one derived
+comparison.
+
+### Launch order and skew
+
+Provider launch order is rotated per trial from a recorded deterministic seed,
+because launch skew is not zero and a fixed order would give one provider a
+systematic head start. Every trial records `launch_order`, per-provider
+`launch_offset_ms`, and `launch_skew_ms`.
+
+### Response differences
+
+When providers return different documents for the same DID, the run records
+`normalized_document_hash` per provider, `exact_subject_match`, metadata
+presence, and flags `PROVIDER_RESULT_DIFFERENCE_OBSERVED`. It does **not** call
+any provider stale, invalid, incorrect or Byzantine: that would require
+method-specific ground truth this project does not have.
+
+### Rate limits and ethics
+
+Public resolver endpoints are testing instances and are **not** load-tested.
+The qualification script enforces a hard per-provider request budget, paces
+requests, and treats HTTP 429 **and 403** as back-off signals that abort the
+run rather than being retried around.
+
+```bash
+python scripts/real_did_qualification.py --pacing 5.0
+```
+
+---
+
 ## How to run tests
 
 ```bash
@@ -403,7 +503,14 @@ python scripts/e2e_smoke.py
 
 # Measurement-apparatus qualification (shadow harness + provenance + analysis)
 python scripts/measurement_qualification.py
+
+# Real DID resolver compatibility qualification (hits real public endpoints)
+python scripts/real_did_qualification.py --pacing 5.0
 ```
+
+Unit and integration tests never touch the public Internet: real provider
+shapes are exercised through `httpx.MockTransport`. Only the explicit
+qualification script above makes real endpoint calls.
 
 `scripts/e2e_smoke.py` exercises scenarios N, D, F, I, T and X, checks router
 behaviour and telemetry for each, prints a PASS/FAIL line per gate, writes
@@ -418,6 +525,12 @@ regression check, then adds: `PASS_PROVENANCE_BINDING`,
 `PASS_SHADOW_ALL_RESOLVER_OBSERVATION`, `PASS_PARALLEL_MEASUREMENT_PATH`,
 `PASS_TRIAL_COMPLETENESS_CHECK`, `PASS_FASTEST_VS_FASTEST_ACCEPTED_ANALYSIS`,
 `PASS_EXISTING_BASELINE_REGRESSION`.
+
+`scripts/real_did_qualification.py` adds: `PASS_REAL_RESOLVER_ADAPTER`,
+`PASS_REAL_DID_RESOLUTION_E2E`, `PASS_MULTI_PROVIDER_SAME_DID_SHADOW`,
+`PASS_W3C_BASIC_ACCEPTANCE`, `PASS_REAL_ERROR_NORMALIZATION`,
+`PASS_CONNECTION_MODE_PROVENANCE`, `PASS_REAL_PROVIDER_PROVENANCE`,
+`PASS_EXISTING_MEASUREMENT_REGRESSION`.
 
 ---
 
@@ -440,7 +553,13 @@ Machine learning / predictive routing · adaptive-k subset sizing · parallel
 racing or hedging **as a routing policy** · BFT or quorum agreement ·
 cross-resolver consistency checks · cryptographic proof verification ·
 freshness/version checks · blockchain or smart-contract logging · cloud
-deployment · real DID providers · statistical characterization claims.
+deployment · statistical characterization claims.
+
+Real DID providers ARE now contacted, but only by the compatibility
+qualification script, and only to prove the adapter/normalization/provenance
+path works. **No performance claim, provider ranking, DID-method comparison,
+resolver-heterogeneity claim, or justification for adaptive routing may be
+derived from any run in this repository.**
 
 The shadow harness probes all resolvers concurrently, but as a *measurement
 instrument only*. It is not a routing policy and does not serve requests.

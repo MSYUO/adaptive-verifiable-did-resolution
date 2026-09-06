@@ -203,3 +203,111 @@ class ShadowTrialRecord(BaseModel):
     # observations exist. Concurrent start is approximate, never perfect.
     launch_skew_ms: float | None = None
     trial_duration_ms: float
+
+
+class RealProviderObservation(BaseModel):
+    """One real resolver provider's outcome within a multi-provider trial.
+
+    Provider/API differences (media type, metadata presence, route metadata)
+    are recorded as provider properties. They are deliberately kept distinct
+    from DID semantics so the two can never be conflated downstream.
+    """
+
+    record_type: str = "real_provider_observation"
+
+    # Provenance -- identical across every observation of one trial.
+    experiment_id: str
+    trial_id: str
+    scenario_id: str
+    phase: str
+    seed: int | None = None
+    git_commit: str | None = None
+    git_dirty: bool | None = None
+    config_hash: str | None = None
+    injection_config_hash: str | None = None
+    provider_inventory_hash: str | None = None
+    fixture_manifest_hash: str | None = None
+    acceptance_profile: str | None = None
+
+    # Connection discipline.
+    connection_mode: str
+    client_reuse_policy: str
+    launch_order_seed: int | None = None
+
+    fixture_id: str
+    requested_did: str
+    did_method: str
+
+    provider_id: str
+    implementation_id: str | None = None
+    resolver_endpoint_id: str
+
+    launch_position: int
+    launch_offset_ms: float
+    start_ts: str
+    end_ts: str
+    latency_ms: float
+
+    http_status: int | None = None
+    content_type: str | None = None
+    transport_outcome: str
+
+    # Audit trail for the exact bytes received.
+    raw_response_hash: str | None = None
+    raw_response_bytes: int | None = None
+
+    resolution_metadata: dict | None = None
+    normalized_did_document: dict | None = None
+    did_document_metadata: dict | None = None
+    provider_route_metadata: dict | None = None
+    normalized_document_hash: str | None = None
+
+    resolution_error_family: str | None = None
+    resolution_error_detail: str | None = None
+    subject_id: str | None = None
+
+    # Individual profile checks; `accepted` is derived from these.
+    acceptance_checks: dict[str, bool | None] = Field(default_factory=dict)
+    accepted: bool = False
+    acceptance_reason: str | None = None
+
+    retry_after: str | None = None
+
+
+class RealProviderTrialRecord(BaseModel):
+    """Trial-level record binding a set of real-provider observations."""
+
+    record_type: str = "real_provider_trial"
+
+    experiment_id: str
+    trial_id: str
+    scenario_id: str
+    phase: str
+    seed: int | None = None
+    git_commit: str | None = None
+    git_dirty: bool | None = None
+    config_hash: str | None = None
+    injection_config_hash: str | None = None
+    provider_inventory_hash: str | None = None
+    fixture_manifest_hash: str | None = None
+    acceptance_profile: str | None = None
+
+    timestamp: str
+    fixture_id: str
+    requested_did: str
+    did_method: str
+
+    connection_mode: str
+    client_reuse_policy: str
+    launch_order_seed: int | None = None
+    launch_order: list[str] = Field(default_factory=list)
+
+    expected_observations: int
+    actual_observations: int
+    complete: bool
+    incomplete_reason: str | None = None
+
+    launch_skew_ms: float | None = None
+    trial_duration_ms: float
+
+    rate_limited_providers: list[str] = Field(default_factory=list)
