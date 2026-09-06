@@ -41,6 +41,6 @@
   "train_dataset_id": "train-v1",
   "validation_dataset_id": "validation-v1",
   "calibration": "platt-sigmoid-on-train",
-  "artifact_sha256": "sha256:0adbd83f914f3561bfd0cc2b7c8d54ef1ebfaa5abaa955171921ec6df3af05ae",
-  "estimator_config_hash": "sha256:45476ee4dfdffc36ef1b09d564e5c1a9e46cc58ac6e7807909e80162affef951"
+  "artifact_sha256": "sha256:ae320f105032b4eb2c02a10dcb9449912c954459e2f5e09e52c261bd16e96d04",
+  "estimator_config_hash": "sha256:ca53be619fb1af41b6f6e23d327fbfd56357fa00d70bf7becd2040595e417eec"
 }
