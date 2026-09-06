@@ -110,3 +110,96 @@ class ResolveFailure(BaseModel):
     attempt_count: int
     logical_completion_latency_ms: float
     attempt_outcomes: list[dict]
+
+
+class ShadowObservation(BaseModel):
+    """One resolver's outcome within a shadow characterization trial.
+
+    A shadow trial probes EVERY candidate resolver for the same logical
+    context, so unlike a routing attempt these observations are complete
+    across the topology and can support counterfactual comparison.
+
+    Measurement-only. Shadow probing is not a routing policy and never serves
+    a client request.
+    """
+
+    record_type: str = "shadow_observation"
+
+    # Provenance -- identical across every observation of one trial.
+    experiment_id: str
+    trial_id: str
+    scenario_id: str
+    phase: str
+    seed: int | None = None
+    git_commit: str | None = None
+    git_dirty: bool | None = None
+    config_hash: str | None = None
+    injection_config_hash: str | None = None
+
+    did: str
+    did_method: str | None = None
+
+    resolver_id: str
+    resolver_url: str
+
+    # Monotonic offset from trial start to the moment this probe was issued.
+    # Differences across observations give the launch skew.
+    launch_offset_ms: float
+
+    start_ts: str
+    end_ts: str
+    latency_ms: float
+
+    http_status: int | None = None
+    outcome: AttemptOutcome
+    timeout: bool = False
+    error: str | None = None
+
+    document_valid: bool | None = None
+    acceptance_reason: str | None = None
+    accepted: bool = False
+
+    @property
+    def responded(self) -> bool:
+        """True when a complete HTTP response was received.
+
+        Timeouts and connection errors are right-censored: the resolver may
+        have been about to answer. Their latency is a lower bound, not a
+        comparable completion time, so they must not enter a min() over
+        response times.
+        """
+        return self.http_status is not None
+
+
+class ShadowTrialRecord(BaseModel):
+    """Trial-level summary binding a set of shadow observations."""
+
+    record_type: str = "shadow_trial"
+
+    experiment_id: str
+    trial_id: str
+    scenario_id: str
+    phase: str
+    seed: int | None = None
+    git_commit: str | None = None
+    git_dirty: bool | None = None
+    config_hash: str | None = None
+    injection_config_hash: str | None = None
+
+    timestamp: str
+    did: str
+    did_method: str | None = None
+
+    # "parallel" probes all resolvers concurrently; "sequential" probes them
+    # one after another. Neither is a routing policy.
+    mode: str
+
+    expected_observations: int
+    actual_observations: int
+    complete: bool
+    incomplete_reason: str | None = None
+
+    # max(launch_offset) - min(launch_offset). Null when fewer than two
+    # observations exist. Concurrent start is approximate, never perfect.
+    launch_skew_ms: float | None = None
+    trial_duration_ms: float

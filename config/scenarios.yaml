@@ -62,3 +62,18 @@ scenarios:
       resolver-a: {force_error: true}
       resolver-b: {force_error: true}
       resolver-c: {force_error: true}
+
+  - id: Q
+    name: qualification-mismatch
+    description: >-
+      Measurement-apparatus qualification with KNOWN ground truth: resolver-a
+      answers fastest but with an unacceptable document, while the acceptable
+      answers are delayed. The expected derived result is therefore
+      fastest_responding = resolver-a and fastest_accepted = resolver-b, i.e.
+      a mismatch. This exists to prove the analysis pipeline computes the
+      quantity correctly. It is a CONTROLLED INJECTION construction and is not
+      evidence about real DID resolvers.
+    behaviors:
+      resolver-a: {force_invalid: true}
+      resolver-b: {artificial_delay_ms: 200}
+      resolver-c: {artificial_delay_ms: 400}

@@ -15,10 +15,20 @@ import threading
 from collections import deque
 from pathlib import Path
 
-from .models import LogicalRequestRecord, ResolverAttempt
+from .models import (
+    LogicalRequestRecord,
+    ResolverAttempt,
+    ShadowObservation,
+    ShadowTrialRecord,
+)
 
 REQUESTS_FILENAME = "requests.jsonl"
 ATTEMPTS_FILENAME = "attempts.jsonl"
+# Shadow measurement records are kept in their own files: they come from
+# the characterization harness, not from serving client traffic, and the
+# two must never be pooled into one dataset.
+SHADOW_TRIALS_FILENAME = "shadow_trials.jsonl"
+SHADOW_OBSERVATIONS_FILENAME = "shadow_observations.jsonl"
 
 
 class TelemetrySink:
@@ -38,6 +48,14 @@ class TelemetrySink:
     @property
     def attempts_path(self) -> Path:
         return self.directory / ATTEMPTS_FILENAME
+
+    @property
+    def shadow_trials_path(self) -> Path:
+        return self.directory / SHADOW_TRIALS_FILENAME
+
+    @property
+    def shadow_observations_path(self) -> Path:
+        return self.directory / SHADOW_OBSERVATIONS_FILENAME
 
     def _append(self, path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +103,16 @@ class TelemetrySink:
                 {"request": r, "attempts": list(self._attempts.get(r["request_id"], []))}
                 for r in records
             ]
+
+    def record_shadow_observation(self, observation: ShadowObservation) -> None:
+        with self._lock:
+            self._append(
+                self.shadow_observations_path, observation.model_dump(mode="json")
+            )
+
+    def record_shadow_trial(self, trial: ShadowTrialRecord) -> None:
+        with self._lock:
+            self._append(self.shadow_trials_path, trial.model_dump(mode="json"))
 
     def counts(self) -> dict[str, int]:
         with self._lock:

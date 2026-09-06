@@ -3,10 +3,13 @@
 Local engineering prototype of a DID resolution router that returns the first
 **acceptable** response rather than merely the first response.
 
-> **Scope of this milestone: multi-resolver baseline routing + controlled fault
-> injection.** There is deliberately no machine learning, no adaptive fan-out
-> sizing (`adaptive-k`), no parallel racing, no blockchain and no connection to
-> any real DID provider. Those belong to later phases.
+> **Scope so far: multi-resolver baseline routing + controlled fault injection,
+> then measurement-apparatus qualification.** There is deliberately no machine
+> learning, no adaptive fan-out sizing (`adaptive-k`), no racing *in the
+> routing path*, no blockchain and no connection to any real DID provider.
+> Those belong to later phases. The one component that contacts every resolver
+> at once is the shadow harness, which is a measurement instrument and never
+> serves a request.
 
 ---
 
@@ -52,7 +55,11 @@ Concretely:
 | `src/avdr/config.py` | Resolver registry loader (YAML + `${VAR:-default}`) |
 | `src/avdr/models.py` | Telemetry models; logical request vs resolver attempt |
 | `src/avdr/acceptance.py` | Minimum structural DID-document checks |
-| `src/avdr/telemetry.py` | Append-only JSONL sink, two separate files |
+| `src/avdr/telemetry.py` | Append-only JSONL sink, four separate files |
+| `src/avdr/provenance.py` | Canonical hashing, git binding, run provenance |
+| `src/avdr/scenarios.py` | Scenario loader + applier, injection hashing |
+| `src/avdr/shadow.py` | Shadow characterization harness (measurement only) |
+| `src/avdr/analysis.py` | Derived analysis + dataset integrity audit |
 | `src/avdr/resolver/settings.py` | Injected-behaviour configuration |
 | `src/avdr/resolver/app.py` | Mock resolver service + admin surface |
 | `src/avdr/router/policies.py` | Policy abstraction and three baselines |
@@ -61,6 +68,7 @@ Concretely:
 | `config/resolvers.yaml` | Resolver registry and router settings |
 | `config/scenarios.yaml` | Reproducible fault-injection scenario definitions |
 | `scripts/e2e_smoke.py` | E2E qualification against docker compose |
+| `scripts/measurement_qualification.py` | Measurement-apparatus qualification |
 
 Policy logic is kept free of HTTP concerns, and the router holds no
 scenario/fault knowledge: injected behaviour belongs to the resolvers.
@@ -128,8 +136,19 @@ freshness/version checks, no cross-resolver agreement.**
 6. `didDocument.verificationMethod` is a non-empty list
 
 A response is `accepted` only if the HTTP call succeeded **and** the document
-passes all six. This is what separates "fastest response" from "fastest
-acceptable response" in the telemetry.
+passes all six.
+
+**What this does not yet establish.** Acceptance makes "responded" and
+"acceptable" distinguishable *per attempt*, but the routing policies cannot
+compare `argmin latency` against `argmin latency among accepted`: they stop at
+the first acceptable response and therefore never observe the resolvers they
+did not attempt. A sequential-failover trace showing resolver-a rejected and
+resolver-b accepted supports only the statement *"the first attempted resolver
+returned an unacceptable response and the next one returned an acceptable
+response"* — it is **not** evidence that the fastest response differed from the
+fastest acceptable response. Answering that requires observing every candidate
+resolver for the same request, which is what the shadow harness
+(`src/avdr/shadow.py`) exists to do.
 
 ---
 
@@ -253,6 +272,12 @@ can never be accidentally aggregated together:
 - `telemetry/requests.jsonl` — one line per **logical request**
 - `telemetry/attempts.jsonl` — one line per **resolver attempt**
 
+The measurement harness writes two further files, kept apart from serving
+traffic (see *Measurement harness* below):
+
+- `shadow_trials.jsonl` — one line per **shadow trial**
+- `shadow_observations.jsonl` — one line per **resolver observation**
+
 One logical request may contain several attempts under failover; conflating
 the two would corrupt any later fan-out or burden analysis.
 
@@ -279,6 +304,92 @@ Conventions:
 
 ---
 
+## Measurement harness (shadow characterization)
+
+**`src/avdr/shadow.py` is measurement-only and is NOT a routing policy.** It is
+deliberately absent from `router.policies.POLICY_TYPES`, unreachable from the
+router's request path, and never serves a client. Probing every resolver on
+every request is precisely the all-race behaviour this project exists to
+avoid in production; here it is an instrument, not a service.
+
+It exists because the routing policies cannot answer counterfactual questions.
+Sequential failover stops at the first acceptable response, so the resolvers it
+did not attempt have no observation at all. A **shadow trial** probes every
+candidate resolver for the same logical context, producing one observation per
+resolver:
+
+```
+                    +--> resolver-a --> observation
+  trial (one DID) --+--> resolver-b --> observation
+                    +--> resolver-c --> observation
+```
+
+Modes: `parallel` (all probes launched from one trial start) and `sequential`.
+Parallel start is **approximate, never perfect** — the per-probe
+`launch_offset_ms` is recorded and the trial's `launch_skew_ms` is measured, not
+assumed to be zero.
+
+Output goes to two further JSONL files: `shadow_trials.jsonl` and
+`shadow_observations.jsonl`, joined on `(experiment_id, trial_id)`. These are
+kept separate from the router's serving telemetry so measurement data and
+production traces can never be pooled into one dataset.
+
+### Provenance
+
+Every measurement record is bound to the run that produced it:
+
+| Field | Meaning |
+| --- | --- |
+| `experiment_id` | One qualification/characterization run |
+| `trial_id` | One trial; shared by all its observations |
+| `scenario_id` | Injected condition applied |
+| `phase` | Project phase that produced the row |
+| `seed` | RNG seed for workload generation |
+| `git_commit` / `git_dirty` | Code identity; `git_dirty` flags uncommitted changes |
+| `config_hash` | SHA-256 over the canonicalised router config |
+| `injection_config_hash` | SHA-256 over the **fully expanded** injected state |
+| `unresolved` | Why any of the above is null |
+
+Hashing uses a deterministic canonical serialisation (recursively sorted keys,
+list order preserved). **Nothing is fabricated:** an unresolvable git SHA or
+hash is recorded as `null` with its reason in `unresolved`, never filled with a
+plausible value. Scenario expansion fills defaults for resolvers a scenario does
+not mention, so an omission and an explicit healthy setting hash identically.
+
+### Derived analysis — qualification only
+
+`src/avdr/analysis.py` computes, per complete trial:
+
+- `fastest_responding_resolver` — argmin latency among resolvers that returned
+  a complete HTTP response
+- `fastest_accepted_resolver` — argmin latency among resolvers whose response
+  passed structural acceptance
+- `fastest_matches_fastest_accepted`
+
+Two rules keep this honest:
+
+- **Right-censoring.** A timed-out or connection-failed observation has no
+  completion time; its latency is a lower bound set by our own deadline. Such
+  observations are excluded from both minima and counted separately, never
+  treated as very slow completions.
+- **Completeness.** A trial missing any observation is marked incomplete and
+  excluded from derivation. It is never partially analysed.
+
+Results carry the label **`CONTROLLED LOCAL QUALIFICATION`**. They demonstrate
+that the pipeline computes the quantity correctly against known injected ground
+truth (scenario `Q`). They are **not** findings about real DID resolvers, and
+proportions are deliberately not reported as evidence in this phase.
+
+```bash
+docker compose up -d
+python scripts/measurement_qualification.py --trials 3 --seed 20260906
+```
+
+N is intentionally tiny — the script refuses more than 10 trials per scenario.
+This phase validates the apparatus; it is not a characterization experiment.
+
+---
+
 ## How to run tests
 
 ```bash
@@ -289,15 +400,24 @@ python -m pytest -q                              # POSIX
 # End-to-end qualification against docker compose (stack must be up)
 docker compose up -d --build
 python scripts/e2e_smoke.py
+
+# Measurement-apparatus qualification (shadow harness + provenance + analysis)
+python scripts/measurement_qualification.py
 ```
 
 `scripts/e2e_smoke.py` exercises scenarios N, D, F, I, T and X, checks router
 behaviour and telemetry for each, prints a PASS/FAIL line per gate, writes
 `artifacts/e2e_report.json`, and exits non-zero if any gate fails.
 
-Gates: `PASS_LOCAL_MULTI_RESOLVER_E2E`, `PASS_ROUND_ROBIN`,
+Routing gates: `PASS_LOCAL_MULTI_RESOLVER_E2E`, `PASS_ROUND_ROBIN`,
 `PASS_SEQUENTIAL_FAILOVER`, `PASS_ATTEMPT_LEVEL_TELEMETRY`,
 `PASS_CONTROLLED_DELAY_INJECTION`, `PASS_CONTROLLED_FAILURE_INJECTION`.
+
+`scripts/measurement_qualification.py` re-runs the routing gates as a
+regression check, then adds: `PASS_PROVENANCE_BINDING`,
+`PASS_SHADOW_ALL_RESOLVER_OBSERVATION`, `PASS_PARALLEL_MEASUREMENT_PATH`,
+`PASS_TRIAL_COMPLETENESS_CHECK`, `PASS_FASTEST_VS_FASTEST_ACCEPTED_ANALYSIS`,
+`PASS_EXISTING_BASELINE_REGRESSION`.
 
 ---
 
@@ -305,7 +425,10 @@ Gates: `PASS_LOCAL_MULTI_RESOLVER_E2E`, `PASS_ROUND_ROBIN`,
 
 - Dependencies pinned in `requirements.txt` / `requirements-dev.txt`
 - Python 3.12 (container: `python:3.12-slim`)
-- Scenarios declared in `config/scenarios.yaml`
+- Scenarios declared in `config/scenarios.yaml`, applied from that file at run
+  time and hashed into `injection_config_hash`
+- Every measurement row carries `git_commit`, `config_hash` and
+  `injection_config_hash`, so a dataset can be bound to the exact run
 - Telemetry is raw JSONL and is **not** committed; it is regenerated by
   running the system, so it is never mistaken for curated evidence
 
@@ -314,6 +437,10 @@ Gates: `PASS_LOCAL_MULTI_RESOLVER_E2E`, `PASS_ROUND_ROBIN`,
 ## Not implemented (by design, this milestone)
 
 Machine learning / predictive routing · adaptive-k subset sizing · parallel
-racing or hedging · BFT or quorum agreement · cross-resolver consistency
-checks · cryptographic proof verification · freshness/version checks ·
-blockchain or smart-contract logging · cloud deployment · real DID providers.
+racing or hedging **as a routing policy** · BFT or quorum agreement ·
+cross-resolver consistency checks · cryptographic proof verification ·
+freshness/version checks · blockchain or smart-contract logging · cloud
+deployment · real DID providers · statistical characterization claims.
+
+The shadow harness probes all resolvers concurrently, but as a *measurement
+instrument only*. It is not a routing policy and does not serve requests.
