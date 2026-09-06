@@ -92,6 +92,13 @@ Concretely:
 | `src/avdr/real_router/adaptive_policy.py` | `adaptive-min-set` policy (wiring only) |
 | `scripts/real_routing_smoke.py` | Minimal real public smoke (1 request) |
 | `scripts/adaptive_qualification.py` | Controlled adaptive decision-layer qualification |
+| `src/avdr/learning/environment.py` | Controlled stochastic episode environment |
+| `src/avdr/learning/features.py` | Pre-request feature contract |
+| `src/avdr/learning/dataset.py` | Trial execution, subset targets, manifests |
+| `src/avdr/learning/estimators.py` | Baselines B0/B1/B2 + learned M1/M2 + freeze |
+| `src/avdr/learning/metrics.py` | Brier / log loss / calibration / decision metrics |
+| `scripts/estimator_pipeline.py` | Generate, train, validate, select, freeze |
+| `scripts/prospective_holdout.py` | Final prospective holdout (run once) |
 
 Policy logic is kept free of HTTP concerns, and the router holds no
 scenario/fault knowledge: injected behaviour belongs to the resolvers.
@@ -645,6 +652,53 @@ the three baselines are untouched.
 [CONTROLLED TEST INPUT].** No model is trained. Qualification proves the
 decision layer selects and executes correctly *given* estimates; it is **not**
 evidence that the estimates are correct.
+
+### Prospective subset-probability estimator
+
+**CONTROLLED LOCAL QUALIFICATION.** Every distribution is injected by us on
+local mock providers. Nothing here measures real DID reliability, latency,
+independence, or any production SLO.
+
+```
+controlled stochastic episodes -> fully observed trials -> subset targets
+  -> pre-request features -> estimators -> freeze -> prospective holdout
+  -> optimizer integration
+```
+
+**Target.** `Y_t(S) = 1` iff some provider in `S` is accepted AND
+`launch_offset + latency <= tau`, with `tau = 250 ms` [DESIGN CHOICE] fixed
+before generation. Raw per-attempt latency is never used on its own. Timeouts,
+errors and unacceptable responses contribute 0; a missing observation excludes
+the trial rather than being read as either success or failure.
+
+**Correlation is real here.** `SHARED_DEGRADATION` slows every provider at
+once — measured within-deadline rates a=0.11 / b=0.14 / c=0.04 versus 1.00 for
+all three under `NORMAL`. Redundancy does not help in that state, which is
+exactly why `q(S) = 1 - Π(1 - p_i)` is never used.
+
+**Feature boundary.** 30 features built only from trials with index `< t`.
+The hidden injected state is recorded for audit and excluded from features by
+test; leakage tests perturb the current trial and append future trials to
+prove neither changes a row.
+
+**Splits** are episode-level with disjoint episode ids *and* seeds — adjacent
+trials within an episode are correlated, so a random row split would leak.
+
+**Selection rule, fixed in advance:** lowest validation Brier, then the
+simplest candidate within 0.005 Brier of the best. **Calibration rule, fixed
+in advance:** apply Platt scaling (fit on TRAIN only) iff validation ECE
+> 0.05.
+
+```bash
+docker compose up -d
+python scripts/estimator_pipeline.py      # generate, train, select, freeze
+python scripts/prospective_holdout.py     # run ONCE, from a clean tree
+```
+
+**Headline result: the non-ML EWMA baseline won.** On validation Brier,
+`b2-ewma` (0.1131) beat both `m2-hist-gradient-boosting` (0.1384) and
+`m1-logistic` (0.1573). ML complexity was **not** justified in this controlled
+environment. That is reported as the result, not engineered around.
 
 ### Demos
 
