@@ -1,0 +1,107 @@
+# Local multi-resolver topology for engineering qualification.
+#
+#                          +-- resolver-a
+#   client -> router ------+-- resolver-b
+#                          +-- resolver-c
+#
+# All four services run on ONE Docker host and share CPU, kernel, network
+# stack and storage. They are NOT independent DID gateways, and nothing
+# measured here describes real-world DID infrastructure.
+#
+# Default state is Scenario N (all resolvers healthy). Other scenarios are
+# applied at runtime by scripts/e2e_smoke.py through each resolver's
+# /admin/behavior endpoint, so scenarios do not require a rebuild.
+
+x-resolver-base: &resolver-base
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  command: uvicorn avdr.resolver.app:app --host 0.0.0.0 --port 8001
+  expose:
+    - "8001"
+  healthcheck:
+    test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2).status==200 else 1)
+    interval: 3s
+    timeout: 3s
+    retries: 10
+    start_period: 3s
+
+services:
+  resolver-a:
+    <<: *resolver-base
+    container_name: avdr-resolver-a
+    environment:
+      RESOLVER_ID: resolver-a
+      # CONTROLLED INJECTION knobs. Defaults = healthy (Scenario N).
+      ARTIFICIAL_DELAY_MS: "0"
+      FORCE_ERROR: "false"
+      FORCE_INVALID: "false"
+      FORCE_TIMEOUT: "false"
+    ports:
+      - "8001:8001"
+
+  resolver-b:
+    <<: *resolver-base
+    container_name: avdr-resolver-b
+    environment:
+      RESOLVER_ID: resolver-b
+      ARTIFICIAL_DELAY_MS: "0"
+      FORCE_ERROR: "false"
+      FORCE_INVALID: "false"
+      FORCE_TIMEOUT: "false"
+    ports:
+      - "8002:8001"
+
+  resolver-c:
+    <<: *resolver-base
+    container_name: avdr-resolver-c
+    environment:
+      RESOLVER_ID: resolver-c
+      ARTIFICIAL_DELAY_MS: "0"
+      FORCE_ERROR: "false"
+      FORCE_INVALID: "false"
+      FORCE_TIMEOUT: "false"
+    ports:
+      - "8003:8001"
+
+  router:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: avdr-router
+    # Single worker: the round-robin rotation counter is process-local and
+    # would not be deterministic across multiple workers.
+    command: uvicorn avdr.router.app:app --host 0.0.0.0 --port 8000 --workers 1
+    environment:
+      RESOLVER_A_URL: http://resolver-a:8001
+      RESOLVER_B_URL: http://resolver-b:8001
+      RESOLVER_C_URL: http://resolver-c:8001
+      AVDR_DEFAULT_POLICY: sequential-failover
+      AVDR_SINGLE_STATIC_TARGET: resolver-a
+      AVDR_ATTEMPT_TIMEOUT_MS: "2000"
+      AVDR_TELEMETRY_DIR: /app/telemetry
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./telemetry:/app/telemetry
+    depends_on:
+      resolver-a:
+        condition: service_healthy
+      resolver-b:
+        condition: service_healthy
+      resolver-c:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status==200 else 1)
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 3s

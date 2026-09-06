@@ -1,0 +1,64 @@
+# Controlled fault-injection scenarios for local engineering qualification.
+#
+# CONTROLLED INJECTION. Every number below is a test knob chosen by us. None
+# of it is a measurement of real DID resolver behaviour, and results produced
+# under these scenarios must never be reported as real-world DID latency,
+# failure or reliability characteristics.
+#
+# Local resolver instances share one host (CPU, kernel, network stack, Docker
+# engine). They are NOT statistically independent gateways.
+
+scenarios:
+  - id: N
+    name: normal
+    description: All resolvers healthy. Control condition.
+    behaviors:
+      resolver-a: {}
+      resolver-b: {}
+      resolver-c: {}
+
+  - id: D
+    name: delay
+    description: >-
+      Resolver B carries an injected +200 ms response delay. 200 ms is an
+      INJECTED TEST VALUE, not a measured real-world DID value.
+    behaviors:
+      resolver-a: {}
+      resolver-b: {artificial_delay_ms: 200}
+      resolver-c: {}
+
+  - id: F
+    name: failure
+    description: Resolver A returns a forced HTTP 503.
+    behaviors:
+      resolver-a: {force_error: true, force_error_status: 503}
+      resolver-b: {}
+      resolver-c: {}
+
+  - id: I
+    name: invalid
+    description: >-
+      Resolver A returns HTTP 200 with a structurally unacceptable DID
+      document (wrong subject id, no verificationMethod).
+    behaviors:
+      resolver-a: {force_invalid: true}
+      resolver-b: {}
+      resolver-c: {}
+
+  - id: T
+    name: timeout
+    description: >-
+      Resolver A holds the connection past the router deadline, forcing a
+      client-side timeout rather than a connection error.
+    behaviors:
+      resolver-a: {force_timeout: true, timeout_sleep_ms: 30000}
+      resolver-b: {}
+      resolver-c: {}
+
+  - id: X
+    name: all-fail
+    description: Every resolver returns a forced HTTP 503.
+    behaviors:
+      resolver-a: {force_error: true}
+      resolver-b: {force_error: true}
+      resolver-c: {force_error: true}

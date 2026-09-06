@@ -1,0 +1,30 @@
+# Resolver registry for the adaptive router.
+#
+# The router loads resolver identities and endpoints from this file only; it
+# never hard-codes them. ${VAR:-default} expansion lets the same file serve a
+# host-local run (127.0.0.1 ports) and docker compose (service names).
+#
+# NOTE: injected experiment behaviour (delay / error / invalid / timeout) is
+# NOT configured here. It belongs to each resolver instance -- see
+# docker-compose.yml and config/scenarios.yaml.
+
+resolvers:
+  - id: resolver-a
+    url: "${RESOLVER_A_URL:-http://127.0.0.1:8001}"
+  - id: resolver-b
+    url: "${RESOLVER_B_URL:-http://127.0.0.1:8002}"
+  - id: resolver-c
+    url: "${RESOLVER_C_URL:-http://127.0.0.1:8003}"
+
+router:
+  # Policy applied when a request does not specify ?policy=
+  default_policy: "${AVDR_DEFAULT_POLICY:-sequential-failover}"
+
+  # Target for the single-static control baseline.
+  single_static_target: "${AVDR_SINGLE_STATIC_TARGET:-resolver-a}"
+
+  # Explicit per-attempt timeout. Never rely on an HTTP library default.
+  attempt_timeout_ms: "${AVDR_ATTEMPT_TIMEOUT_MS:-2000}"
+
+  policy_version: "baseline-v1"
+  telemetry_dir: "${AVDR_TELEMETRY_DIR:-telemetry}"
