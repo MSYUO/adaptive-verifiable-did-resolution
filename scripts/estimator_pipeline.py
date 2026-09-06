@@ -58,6 +58,7 @@ from avdr.learning.estimators import (  # noqa: E402
     EwmaEstimator,
     GlobalRateEstimator,
     RollingEmpiricalEstimator,
+    SigmoidCalibratedEstimator,
     SubsetRateEstimator,
     build_gradient_boosting,
     build_logistic,
@@ -246,10 +247,28 @@ def main() -> int:
 
     selected_ece = validation_metrics[selected_name].ece
     calibration = None
+    calibrated_metrics = None
     if selected_ece > ECE_CALIBRATION_THRESHOLD:
-        calibration = "sigmoid-on-train"
-        print(f"  calibration        : applying ({selected_ece:.4f} > "
+        print(f"  calibration        : APPLYING ({selected_ece:.4f} > "
               f"{ECE_CALIBRATION_THRESHOLD})")
+        # Fit Platt scaling on TRAIN predictions only.
+        train_q, train_y = [], []
+        y_t, y_p = replay_history_predictions(
+            selected, train_trials, DEADLINE_TAU_MS, needs_history=True
+        )
+        train_y, train_q = y_t, y_p
+        selected = SigmoidCalibratedEstimator(selected).fit_from_predictions(
+            train_q, train_y
+        )
+        calibration = "platt-sigmoid-on-train"
+        cy, cp = replay_history_predictions(
+            selected, val_trials, DEADLINE_TAU_MS, needs_history=True
+        )
+        calibrated_metrics = evaluate_estimator(selected.estimator_id, cy, cp)
+        print(f"    post-calibration validation: brier="
+              f"{calibrated_metrics.brier:.5f} logloss="
+              f"{calibrated_metrics.log_loss:.5f} ece={calibrated_metrics.ece:.5f}")
+        print(f"    calibrated estimator id: {selected.estimator_id}")
     else:
         print(f"  calibration        : not applied ({selected_ece:.4f} <= "
               f"{ECE_CALIBRATION_THRESHOLD})")
@@ -314,6 +333,13 @@ def main() -> int:
             f"{ECE_CALIBRATION_THRESHOLD}"
         ),
         "calibration_applied": calibration,
+        "post_calibration_validation_metrics": (
+            {**calibrated_metrics.to_dict(),
+             "reliability": calibrated_metrics.reliability_table}
+            if calibrated_metrics
+            else None
+        ),
+        "frozen_estimator_id": selected.estimator_id,
         "frozen_artifact": artifact.metadata(),
         "disclaimer": (
             "Controlled injection on one shared host. No claim about real DID "

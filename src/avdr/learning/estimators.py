@@ -352,3 +352,69 @@ def load_frozen(path: Path) -> tuple[SubsetEstimator, dict, str]:
             f"{metadata.get('artifact_sha256')}, file hashes to {digest}"
         )
     return estimator, metadata, digest
+
+
+class SigmoidCalibratedEstimator(BaseSubsetEstimator):
+    """Platt scaling on top of another estimator's probabilities.
+
+    Fitted on TRAIN predictions ONLY -- never on validation and never on the
+    final holdout. The wrapper keeps the base estimator intact so the
+    uncalibrated behaviour remains inspectable.
+
+    Applied only when the pre-declared rule fires (validation ECE above the
+    documented threshold), so calibration is a rule-driven step rather than a
+    post-hoc reaction to results.
+    """
+
+    def __init__(self, base: SubsetEstimator, coef: float = 1.0, intercept: float = 0.0):
+        self.base = base
+        self.coef = float(coef)
+        self.intercept = float(intercept)
+        self.estimator_id = f"{base.estimator_id}+sigmoid"
+        self.estimator_version = base.estimator_version
+
+    @staticmethod
+    def _logit(p: float) -> float:
+        p = _clip(p)
+        return float(np.log(p / (1.0 - p)))
+
+    def fit_from_predictions(self, q_raw: Sequence[float], y: Sequence[int]):
+        from sklearn.linear_model import LogisticRegression
+
+        X = np.array([[self._logit(q)] for q in q_raw], dtype=float)
+        target = np.asarray(y, dtype=int)
+        if len(set(target.tolist())) < 2:
+            # Degenerate target: leave the identity mapping rather than fit
+            # something meaningless.
+            self.coef, self.intercept = 1.0, 0.0
+            return self
+        model = LogisticRegression(max_iter=1000).fit(X, target)
+        self.coef = float(model.coef_[0][0])
+        self.intercept = float(model.intercept_[0])
+        return self
+
+    def estimate(self, subset, context=None):
+        raw = self.base.estimate(subset, context)
+        if raw is None:
+            return None
+        z = self.coef * self._logit(float(raw)) + self.intercept
+        return self._finalize(float(1.0 / (1.0 + np.exp(-z))))
+
+    def config_hash(self) -> str:
+        return config_hash(
+            {
+                "id": self.estimator_id,
+                "base": self.base.config_hash(),
+                "coef": round(self.coef, 9),
+                "intercept": round(self.intercept, 9),
+            }
+        )
+
+    def describe(self) -> dict:
+        return {
+            **super().describe(),
+            "base_estimator_id": self.base.estimator_id,
+            "calibration": "platt-sigmoid-on-train",
+            "coef": self.coef,
+            "intercept": self.intercept,
+        }

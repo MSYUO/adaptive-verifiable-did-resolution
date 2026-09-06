@@ -478,3 +478,55 @@ def test_no_public_network_in_learning_paths():
 
     for url in ADMIN_URLS.values():
         assert url.startswith("http://127.0.0.1:")
+
+
+# ==========================================================================
+# calibration wrapper
+# ==========================================================================
+
+
+def test_sigmoid_calibration_is_applied_not_merely_labelled():
+    """A calibrated estimator must actually change its outputs."""
+    from avdr.learning.estimators import SigmoidCalibratedEstimator
+
+    base = GlobalRateEstimator(0.9)
+    raw = base.estimate(("local-a",))
+    # Base says 0.9 but only 50% of outcomes were positive at that score.
+    calibrated = SigmoidCalibratedEstimator(base).fit_from_predictions(
+        [0.9] * 100, [1] * 50 + [0] * 50
+    )
+    adjusted = calibrated.estimate(("local-a",))
+    assert adjusted != pytest.approx(raw, abs=1e-6)
+    assert 0.0 <= adjusted <= 1.0
+    assert calibrated.estimator_id.endswith("+sigmoid")
+    assert calibrated.describe()["calibration"] == "platt-sigmoid-on-train"
+
+
+def test_calibration_preserves_none_for_uncovered_subsets():
+    from avdr.learning.estimators import SigmoidCalibratedEstimator
+
+    base = build_logistic().fit(synthetic_rows())
+    calibrated = SigmoidCalibratedEstimator(base)
+    # No context -> base returns None -> wrapper must not invent a value.
+    assert calibrated.estimate(("local-a",), None) is None
+
+
+def test_calibrated_estimator_freezes_and_reloads(tmp_path):
+    from avdr.learning.estimators import SigmoidCalibratedEstimator
+
+    base = EwmaEstimator().fit(synthetic_rows())
+    calibrated = SigmoidCalibratedEstimator(base).fit_from_predictions(
+        [0.7] * 60 + [0.3] * 60, [1] * 40 + [0] * 20 + [1] * 20 + [0] * 40
+    )
+    payload = {HISTORY_KEY: {("local-a",): [1, 1, 0]}}
+    before = calibrated.estimate(("local-a",), payload)
+
+    path = tmp_path / "cal.pkl"
+    freeze_estimator(
+        calibrated, path, model_family="b2-ewma+sigmoid", hyperparameters={},
+        deadline_tau_ms=TAU, train_dataset_id="t", validation_dataset_id="v",
+        calibration="platt-sigmoid-on-train",
+    )
+    reloaded, metadata, _ = load_frozen(path)
+    assert metadata["calibration"] == "platt-sigmoid-on-train"
+    assert reloaded.estimate(("local-a",), payload) == pytest.approx(before)
