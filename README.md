@@ -87,7 +87,11 @@ Concretely:
 | `config/providers.local.yaml` | Local controlled provider inventory |
 | `scripts/real_did_qualification.py` | Real DID resolver compatibility qualification |
 | `scripts/real_routing_demo.py` | Controlled local routing demo (no public calls) |
+| `src/avdr/adaptive/estimator.py` | Layer A — subset estimates `q_hat(S\|x)` |
+| `src/avdr/adaptive/optimizer.py` | Layer B — minimum-set optimizer + cost models |
+| `src/avdr/real_router/adaptive_policy.py` | `adaptive-min-set` policy (wiring only) |
 | `scripts/real_routing_smoke.py` | Minimal real public smoke (1 request) |
+| `scripts/adaptive_qualification.py` | Controlled adaptive decision-layer qualification |
 
 Policy logic is kept free of HTTP concerns, and the router holds no
 scenario/fault knowledge: injected behaviour belongs to the resolvers.
@@ -528,6 +532,7 @@ curl localhost:8080/telemetry/requests/<request_id>
 | `single-static` | sequential | 1 | One explicitly selected provider. **No hidden failover.** |
 | `sequential-failover` | sequential | 1 | In order until structurally acceptable; nothing contacted after success. |
 | `all-race` | concurrent | **2** | All candidates at once; first *structurally acceptable* completion wins. |
+| `adaptive-min-set` | concurrent | 1 | **Proposed logic**, not a baseline. Minimum-cost subset predicted to meet the target, then raced. |
 
 `all-race` is the maximum-fan-out control this project exists to improve on,
 not the proposed algorithm. It requires two providers — racing one provider is
@@ -566,8 +571,80 @@ After a winner is found, outstanding requests are cancelled. Cancellation is
 recorded as `canceled_before_dispatch` or
 `canceled_after_dispatch_provider_side_unknown` — once a request is on the
 wire the provider may already have done the work, and cancellation is never
-reported as if it had prevented that. Cancelled attempts carry `null` latency,
-never a fabricated `0`.
+reported as if it had prevented that.
+
+**Launch-timing invariant:** `dispatched == true ⇒ launch_offset_ms is not
+null`. A cancelled attempt that reached dispatch keeps the launch offset
+measured before the request left, and carries `null` *latency* only (never a
+fabricated `0`). The only permitted null offset on a dispatched attempt is one
+accompanied by an explicit `telemetry_error`, and a pydantic validator
+enforces this at construction rather than by convention.
+
+### Adaptive minimum-set decision engine
+
+Three layers, deliberately separated — estimation never optimizes, optimization
+never performs I/O, execution never re-derives either:
+
+```
+request context
+   -> Estimator   q_hat(S | x)            src/avdr/adaptive/estimator.py
+   -> Optimizer   S* = argmin C(S)        src/avdr/adaptive/optimizer.py
+   -> Executor    first acceptable        src/avdr/real_router/executor.py
+```
+
+**Contract**
+
+```
+S*(x) = argmin C(S)   subject to   q_hat(S | x) >= target
+C(S)  = |S|                                        [DESIGN CHOICE]
+```
+
+Cardinality is a stand-in for request burden, **not** a validated economic
+model; the `CostModel` interface lets later work substitute API/resource cost
+without touching the optimizer.
+
+**No independence assumption.** The estimator is defined over *subsets*, and
+`q_hat(S) = 1 - Π(1 - p_i)` is **not** implemented and is **not** used as a
+fallback. A subset with no estimate is reported as unknown
+(`unestimated_subset_count`), never synthesised. A test asserts the source
+contains no product accumulator, and another proves behaviourally that a
+composite subset's value comes from the table by using an *anti-independent*
+fixture where the pair scores lower than either member.
+
+**Tie-break rule** (fixed before execution, never random):
+
+1. lowest cost
+2. highest `q_hat`
+3. lexicographic provider-id order
+
+Criterion "lowest predicted accepted latency" is defined in the ordering but
+**skipped in this milestone** — no latency predictor exists.
+
+**When nothing satisfies the target** the planner returns HTTP 409
+`SLO_ESTIMATE_UNSATISFIABLE` with the target, the best subset found and its
+estimate. It never silently calls everything and reports the SLO as met. An
+optional degradation mode executes all eligible providers but is tagged
+`best_effort: true`, and `OptimizerResult.satisfied` is `False` for it.
+
+**Bounds.** Exact enumeration evaluates `2^M − 1` subsets, so
+`MAX_ADAPTIVE_CANDIDATES = 12` [DESIGN CHOICE]. Exceeding it returns
+`ADAPTIVE_CANDIDATE_LIMIT_EXCEEDED` rather than truncating the provider set or
+switching to an unvalidated approximation.
+
+```bash
+curl -X POST localhost:8080/resolve -H 'content-type: application/json'      -d '{"did":"did:example:x","policy":"adaptive-min-set",
+          "target_slo_probability":0.992}'
+```
+
+Clients supply **only the target**. The estimator and its `q_hat` table are
+server-side configuration — a client can never submit its own probability
+table. Without a configured estimator the policy is simply unavailable, and
+the three baselines are untouched.
+
+**The estimator in this milestone is a deterministic table supplied as
+[CONTROLLED TEST INPUT].** No model is trained. Qualification proves the
+decision layer selects and executes correctly *given* estimates; it is **not**
+evidence that the estimates are correct.
 
 ### Demos
 
@@ -575,6 +652,7 @@ never a fabricated `0`.
 docker compose up -d
 python scripts/real_routing_demo.py     # Scenarios A/B/C, zero public calls
 python scripts/real_routing_smoke.py    # ONE real public request
+python scripts/adaptive_qualification.py  # K1/K2/K3/KU, zero public calls
 ```
 
 The smoke script reports `REAL_E2E_DEFERRED_RATE_BUDGET` if the provider

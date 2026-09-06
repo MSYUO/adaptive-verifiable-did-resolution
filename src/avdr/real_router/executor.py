@@ -174,6 +174,22 @@ class RealRoutingExecutor:
             fixture_manifest_hash=provenance.fixture_manifest_hash,
             policy_metadata=plan.metadata,
             attempt_timeout_ms=self.timeout_ms,
+            # Adaptive decision fields, lifted out of the plan metadata so a
+            # dataset can be queried without parsing a nested blob.
+            target_slo_probability=plan.metadata.get("target_slo_probability"),
+            estimator_id=plan.metadata.get("estimator_id"),
+            estimator_version=plan.metadata.get("estimator_version"),
+            estimator_config_hash=plan.metadata.get("estimator_config_hash"),
+            evaluated_subset_count=plan.metadata.get("evaluated_subset_count"),
+            selected_subset=plan.metadata.get("selected_subset"),
+            selected_subset_size=plan.metadata.get("selected_subset_size"),
+            estimated_subset_success=plan.metadata.get("estimated_subset_success"),
+            selection_cost=plan.metadata.get("selection_cost"),
+            selection_status=plan.metadata.get("status"),
+            selection_reason=plan.metadata.get("selection_reason"),
+            optimizer_version=plan.metadata.get("optimizer_version"),
+            cost_model_id=plan.metadata.get("cost_model_id"),
+            best_effort=plan.metadata.get("best_effort"),
         )
         return RoutingResult(record, attempts, payload, raw_bodies)
 
@@ -188,7 +204,8 @@ class RealRoutingExecutor:
                 self.budgets.charge(provider.id)
             offset_ms = (time.perf_counter() - started) * 1000.0
             outcome = await probe_provider(
-                client, provider, did, self.timeout_ms, offset_ms
+                client, provider, did, self.timeout_ms, offset_ms,
+                dispatch_state=DispatchState(),
             )
             attempts.append(
                 _attempt_from_probe(
@@ -247,6 +264,7 @@ class RealRoutingExecutor:
                         _failed_attempt(
                             request_id, provider, positions[provider.id], exc,
                             self.acceptance_profile,
+                            dispatch_states[provider.id],
                         )
                     )
                     continue
@@ -278,7 +296,17 @@ class RealRoutingExecutor:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
-            dispatched = dispatch_states[provider.id].dispatched
+            state = dispatch_states[provider.id]
+            dispatched = state.dispatched
+            # Invariant: a dispatched attempt keeps the launch timing that was
+            # recorded before the request left. Only a genuine clock failure
+            # may leave it null, and that is reported explicitly.
+            telemetry_error = None
+            if dispatched and state.launch_offset_ms is None:
+                telemetry_error = (
+                    "launch timing missing for a dispatched attempt; clock or "
+                    "instrumentation failure"
+                )
             attempts.append(
                 RealRoutingAttempt(
                     request_id=request_id,
@@ -286,10 +314,11 @@ class RealRoutingExecutor:
                     provider_id=provider.id,
                     implementation_id=provider.implementation_id,
                     resolver_endpoint_id=provider.endpoint,
-                    launch_offset_ms=None,
-                    start_ts=None,
+                    launch_offset_ms=state.launch_offset_ms,
+                    start_ts=state.start_ts,
                     end_ts=utc_now_iso(),
                     latency_ms=None,
+                    telemetry_error=telemetry_error,
                     transport_outcome="canceled",
                     http_status=None,
                     content_type=None,
@@ -310,17 +339,28 @@ class RealRoutingExecutor:
         return attempts, payload, raw_bodies
 
 
-def _failed_attempt(request_id, provider, position, exc, acceptance_profile):
+def _failed_attempt(
+    request_id, provider, position, exc, acceptance_profile, state=None
+):
+    dispatched = state.dispatched if state is not None else False
+    launch_offset_ms = state.launch_offset_ms if state is not None else None
+    telemetry_error = None
+    if dispatched and launch_offset_ms is None:
+        telemetry_error = (
+            "launch timing missing for a dispatched attempt; clock or "
+            "instrumentation failure"
+        )
     return RealRoutingAttempt(
         request_id=request_id,
         launch_position=position,
         provider_id=provider.id,
         implementation_id=provider.implementation_id,
         resolver_endpoint_id=provider.endpoint,
-        launch_offset_ms=None,
-        start_ts=None,
+        launch_offset_ms=launch_offset_ms,
+        start_ts=state.start_ts if state is not None else None,
         end_ts=utc_now_iso(),
         latency_ms=None,
+        telemetry_error=telemetry_error,
         transport_outcome="probe_error",
         http_status=None,
         content_type=None,
@@ -331,5 +371,5 @@ def _failed_attempt(request_id, provider, position, exc, acceptance_profile):
         error=f"{type(exc).__name__}: {exc}",
         canceled=False,
         cancellation_outcome=COMPLETED,
-        dispatched=True,
+        dispatched=dispatched,
     )

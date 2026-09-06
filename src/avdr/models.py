@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class AttemptOutcome(str, Enum):
@@ -359,6 +359,28 @@ class RealRoutingAttempt(BaseModel):
     cancellation_outcome: str = "completed"
     # Whether the HTTP request had already left when cancellation happened.
     dispatched: bool = True
+    # Set only when timing genuinely could not be captured. An attempt that
+    # was dispatched must carry a launch offset OR an explicit error here --
+    # never a silent null.
+    telemetry_error: str | None = None
+
+    @model_validator(mode="after")
+    def _dispatched_attempts_have_launch_timing(self):
+        """Invariant: dispatched => launch_offset_ms is known.
+
+        A dispatched attempt was, by definition, launched at a measured
+        moment. Losing that timestamp on cancellation would make canceled
+        attempts unanalysable, so the only permitted null is one accompanied
+        by an explicit telemetry_error.
+        """
+        if self.dispatched and self.launch_offset_ms is None:
+            if not self.telemetry_error:
+                raise ValueError(
+                    "dispatched attempt has no launch_offset_ms and no "
+                    "telemetry_error; launch timing must be preserved for "
+                    "any attempt that reached dispatch"
+                )
+        return self
 
 
 class RealRoutingRequestRecord(BaseModel):
@@ -400,3 +422,19 @@ class RealRoutingRequestRecord(BaseModel):
     provider_inventory_hash: str | None = None
     fixture_manifest_hash: str | None = None
     policy_metadata: dict = Field(default_factory=dict)
+
+    # ---- adaptive decision layer (null for the baseline policies) ----
+    target_slo_probability: float | None = None
+    estimator_id: str | None = None
+    estimator_version: str | None = None
+    estimator_config_hash: str | None = None
+    evaluated_subset_count: int | None = None
+    selected_subset: list[str] | None = None
+    selected_subset_size: int | None = None
+    estimated_subset_success: float | None = None
+    selection_cost: float | None = None
+    selection_status: str | None = None
+    selection_reason: str | None = None
+    optimizer_version: str | None = None
+    cost_model_id: str | None = None
+    best_effort: bool | None = None

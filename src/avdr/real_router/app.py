@@ -5,8 +5,11 @@ User-facing API over the qualified real adapters. The mock router
 path; this service shares the same separations -- policy holds no I/O,
 transport holds no policy, providers hold no routing knowledge.
 
-Nothing here predicts, sizes fan-out adaptively, or ranks providers. The three
-policies are baselines.
+Three BASELINE policies (single-static, sequential-failover, all-race) plus the
+proposed `adaptive-min-set`, which is added alongside them and never replaces
+them. Nothing here ranks providers, and the adaptive policy uses a
+server-configured estimator only -- clients supply a target, never a
+probability table.
 """
 
 from __future__ import annotations
@@ -28,10 +31,13 @@ from ..candidates import (
     select_candidates,
 )
 from ..config import REPO_ROOT
+from ..adaptive.estimator import EstimatorError, SubsetEstimator
+from ..adaptive.optimizer import TIE_BREAK_RULE, CostModel, validate_target
 from ..inventory import ProviderInventory, load_provider_inventory
 from ..profiles import CHECK_ORDER, PROFILE_W3C_BASIC_V1
 from ..provenance import build_provenance, new_experiment_id
 from ..telemetry import TelemetrySink
+from .adaptive_policy import AdaptivePlanningError, RealAdaptiveMinSet
 from .executor import RealRoutingExecutor
 from .policies import POLICY_TYPES, build_policies
 
@@ -41,6 +47,10 @@ PHASE = "real-routing-service"
 class ResolveRequest(BaseModel):
     did: str = Field(min_length=1)
     policy: str | None = None
+    # Only the TARGET is client-supplied. The estimator and its q_hat table
+    # are server-side configuration: a client must never be able to submit
+    # its own probability table to a production-facing API.
+    target_slo_probability: float | None = None
 
 
 def create_app(
@@ -52,11 +62,24 @@ def create_app(
     launch_order_seed: int | None = 20260907,
     budgets: BudgetRegistry | None = None,
     experiment_id: str | None = None,
+    estimator: SubsetEstimator | None = None,
+    default_target_slo: float = 0.99,
+    cost_model: CostModel | None = None,
+    allow_best_effort: bool = False,
 ) -> FastAPI:
     inventory = inventory or load_provider_inventory()
     sink = sink or TelemetrySink(telemetry_dir or (REPO_ROOT / "telemetry" / "routing"))
     budgets = budgets if budgets is not None else BudgetRegistry(inventory)
     policies = build_policies(single_static_target, launch_order_seed)
+    # The adaptive policy is ADDED alongside the baselines, never replacing
+    # them. Without a server-configured estimator it is simply unavailable.
+    if estimator is not None:
+        policies[RealAdaptiveMinSet.name] = RealAdaptiveMinSet(
+            estimator=estimator,
+            default_target=default_target_slo,
+            cost_model=cost_model,
+            allow_best_effort=allow_best_effort,
+        )
     executor = RealRoutingExecutor(
         acceptance_profile=PROFILE_W3C_BASIC_V1,
         timeout_ms=timeout_ms,
@@ -152,6 +175,24 @@ def create_app(
             "minimum_providers": {
                 name: policy.min_providers for name, policy in policies.items()
             },
+            "adaptive": (
+                {
+                    **policies[RealAdaptiveMinSet.name].estimator.describe(),
+                    "default_target_slo_probability": default_target_slo,
+                    "optimizer_version": policies[
+                        RealAdaptiveMinSet.name
+                    ].optimizer.version,
+                    "cost_model": policies[
+                        RealAdaptiveMinSet.name
+                    ].optimizer.cost_model.describe(),
+                    "tie_break_rule": TIE_BREAK_RULE,
+                    "max_adaptive_candidates": policies[
+                        RealAdaptiveMinSet.name
+                    ].optimizer.max_candidates,
+                }
+                if RealAdaptiveMinSet.name in policies
+                else None
+            ),
             "note": (
                 "All three are baselines. None performs prediction, adaptive "
                 "fan-out sizing or provider ranking."
@@ -218,7 +259,46 @@ def create_app(
             )
 
         try:
-            plan = policy.plan(candidate_set.candidates, did)
+            if isinstance(policy, RealAdaptiveMinSet):
+                try:
+                    target = (
+                        validate_target(payload.target_slo_probability)
+                        if payload.target_slo_probability is not None
+                        else None
+                    )
+                except (ValueError, EstimatorError) as exc:
+                    return JSONResponse(
+                        status_code=422,
+                        content={
+                            "error": "invalidTargetSloProbability",
+                            "detail": str(exc),
+                        },
+                    )
+                plan = policy.plan(
+                    candidate_set.candidates, did, target_probability=target
+                )
+            else:
+                plan = policy.plan(candidate_set.candidates, did)
+        except AdaptivePlanningError as exc:
+            # No executable subset. Never silently degrade into calling
+            # everything and reporting the SLO as met.
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": exc.status,
+                    "detail": str(exc),
+                    "requested_did": did,
+                    "did_method": did_method,
+                    "routing_policy": policy_name,
+                    **exc.result.summary(),
+                    "skipped_providers": candidate_set.skipped_dicts(),
+                },
+            )
+        except EstimatorError as exc:
+            return JSONResponse(
+                status_code=500,
+                content={"error": "invalidEstimatorOutput", "detail": str(exc)},
+            )
         except KeyError as exc:
             return JSONResponse(
                 status_code=409,
@@ -272,6 +352,21 @@ def create_app(
             "acceptance_checks": dict(winner.acceptance_checks) if winner else {},
             "warnings": warnings,
         }
+
+        if plan.policy == RealAdaptiveMinSet.name:
+            response["adaptive_plan"] = {
+                key: plan.metadata.get(key)
+                for key in (
+                    "status", "target_slo_probability", "candidate_providers",
+                    "candidate_count", "evaluated_subset_count",
+                    "unestimated_subset_count", "selected_subset",
+                    "selected_subset_size", "estimated_subset_success",
+                    "selection_cost", "selection_reason", "best_subset",
+                    "best_probability", "best_effort", "optimizer_version",
+                    "cost_model_id", "tie_break_rule", "estimator_id",
+                    "estimator_version", "estimator_config_hash",
+                )
+            }
 
         if not result.success:
             response["error"] = "noAcceptableResult"

@@ -38,9 +38,18 @@ def utc_now_iso() -> str:
 
 @dataclass
 class DispatchState:
-    """Tracks how far a probe got, so cancellation can be described exactly."""
+    """Tracks how far a probe got, so cancellation can be described exactly.
+
+    Launch timing is captured here as well as in the returned outcome, because
+    a cancelled probe never returns an outcome. Invariant: once `dispatched`
+    is true, `launch_offset_ms` has already been recorded, so a cancelled
+    dispatched attempt can still report when it was launched.
+    """
 
     dispatched: bool = False
+    launch_offset_ms: float | None = None
+    start_ts: str | None = None
+    telemetry_error: str | None = None
 
 
 @dataclass
@@ -81,6 +90,9 @@ async def probe_provider(
 
     start_ts = utc_now_iso()
     started = time.perf_counter()
+    # Recorded before dispatch so the value survives cancellation.
+    state.launch_offset_ms = round(launch_offset_ms, 3)
+    state.start_ts = start_ts
 
     http_status = content_type = None
     raw_bytes = body = parse_error = retry_after = None
