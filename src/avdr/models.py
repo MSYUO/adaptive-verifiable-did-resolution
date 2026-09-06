@@ -311,3 +311,92 @@ class RealProviderTrialRecord(BaseModel):
     trial_duration_ms: float
 
     rate_limited_providers: list[str] = Field(default_factory=list)
+
+
+class RealRoutingAttempt(BaseModel):
+    """One attempt against one real provider inside a routing request.
+
+    Nullable timing fields are genuinely unknown: a canceled attempt that
+    never completed has no latency, and recording 0 would be a fabrication.
+    """
+
+    record_type: str = "real_routing_attempt"
+
+    request_id: str
+    launch_position: int
+    provider_id: str
+    implementation_id: str | None = None
+    resolver_endpoint_id: str
+
+    launch_offset_ms: float | None = None
+    start_ts: str | None = None
+    end_ts: str | None = None
+    latency_ms: float | None = None
+
+    transport_outcome: str
+    http_status: int | None = None
+    content_type: str | None = None
+    throttled: bool = False
+    retry_after: str | None = None
+    error: str | None = None
+
+    resolution_error_family: str | None = None
+    resolution_error_detail: str | None = None
+
+    acceptance_profile: str
+    acceptance_checks: dict[str, bool | None] = Field(default_factory=dict)
+    acceptance_reason: str | None = None
+    accepted: bool = False
+
+    subject_id: str | None = None
+    normalized_document_hash: str | None = None
+    raw_response_hash: str | None = None
+    raw_response_bytes: int | None = None
+
+    canceled: bool = False
+    # "completed" | "canceled_before_dispatch"
+    # | "canceled_after_dispatch_provider_side_unknown"
+    cancellation_outcome: str = "completed"
+    # Whether the HTTP request had already left when cancellation happened.
+    dispatched: bool = True
+
+
+class RealRoutingRequestRecord(BaseModel):
+    """One client-facing routing request against real providers."""
+
+    record_type: str = "real_routing_request"
+
+    request_id: str
+    timestamp: str
+    requested_did: str
+    did_method: str | None = None
+
+    routing_policy: str
+    execution: str
+    acceptance_profile: str
+
+    # Providers eligible for this request, and those excluded with reasons.
+    # Skipped providers were NEVER CALLED: they are not failures.
+    candidate_providers: list[str] = Field(default_factory=list)
+    qualified_provider_count: int = 0
+    skipped_providers: list[dict] = Field(default_factory=list)
+
+    attempted_providers: list[str] = Field(default_factory=list)
+    returned_provider: str | None = None
+    success: bool = False
+    failure_reason: str | None = None
+
+    logical_completion_latency_ms: float
+    attempt_count: int = 0
+    canceled_count: int = 0
+    attempt_timeout_ms: int | None = None
+
+    # Provenance.
+    experiment_id: str | None = None
+    phase: str | None = None
+    git_commit: str | None = None
+    git_dirty: bool | None = None
+    config_hash: str | None = None
+    provider_inventory_hash: str | None = None
+    fixture_manifest_hash: str | None = None
+    policy_metadata: dict = Field(default_factory=dict)

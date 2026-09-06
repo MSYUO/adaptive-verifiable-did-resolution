@@ -8,7 +8,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
-from .config import REPO_ROOT
+from .config import REPO_ROOT, expand_env
 from .provenance import config_hash
 
 DEFAULT_PROVIDERS_PATH = REPO_ROOT / "config" / "providers.yaml"
@@ -122,15 +122,26 @@ class FixtureManifest(BaseModel):
 
 
 def load_provider_inventory(path: str | Path | None = None) -> ProviderInventory:
-    data = yaml.safe_load(
+    # ${VAR:-default} expansion, so one inventory file works for a host-local
+    # run and for docker service names. Without this the placeholder would be
+    # used verbatim as a URL.
+    raw = expand_env(
         Path(path or DEFAULT_PROVIDERS_PATH).read_text(encoding="utf-8")
     )
+    data = yaml.safe_load(raw)
     inventory = ProviderInventory(**data)
     seen = set()
     for provider in inventory.providers:
         if provider.id in seen:
             raise ValueError(f"duplicate provider id {provider.id!r}")
         seen.add(provider.id)
+        # Catch an unexpanded placeholder or a typo before it becomes a
+        # mysterious connection error at request time.
+        if not provider.endpoint.startswith(("http://", "https://")):
+            raise ValueError(
+                f"provider {provider.id!r} has a non-URL endpoint "
+                f"{provider.endpoint!r} (unexpanded ${{VAR}} placeholder?)"
+            )
         if provider.auth_required and provider.available:
             # An authenticated provider cannot be marked available unless
             # credentials were explicitly confirmed present.

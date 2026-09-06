@@ -1,0 +1,71 @@
+# LOCAL provider inventory -- controlled deterministic services only.
+#
+# Points the real routing service at the three mock resolvers from the earlier
+# milestone (docker compose: resolver-a/b/c). Those resolvers already emit a
+# full DID Resolution Result shape, so the same `universal-resolver-v1`
+# adapter handles them without special-casing.
+#
+# Purpose: exercise the real routing policies deterministically, with zero
+# public-network traffic and zero third-party request budget consumed.
+#
+# EVERYTHING observed through this inventory is [CONTROLLED INJECTION] on a
+# single shared host. These are NOT independent providers, the documents are
+# synthetic, and no latency here describes real DID infrastructure.
+
+inventory_version: "local-2026-09-07-a"
+
+providers:
+  - id: local-a
+    implementation_id: avdr-mock-resolver
+    operator: "self-hosted (this project, controlled test service)"
+    endpoint: "${LOCAL_A_URL:-http://127.0.0.1:8001}"
+    adapter: universal-resolver-v1
+    auth_required: false
+    credentials_available: null
+    supported_did_methods: [example]
+    response_media_type: "application/json"
+    full_resolution_result: true
+    rate_limit_documented: false
+    rate_limit_notes: "Local controlled service; no third-party budget."
+    terms_notes: "Project-controlled mock resolver."
+    source: "this repository, src/avdr/resolver/app.py"
+    available: true
+    independence_notes: >-
+      Shares one Docker host with local-b and local-c. NOT an independent
+      provider and never to be described as one.
+
+  - id: local-b
+    implementation_id: avdr-mock-resolver
+    operator: "self-hosted (this project, controlled test service)"
+    endpoint: "${LOCAL_B_URL:-http://127.0.0.1:8002}"
+    adapter: universal-resolver-v1
+    auth_required: false
+    credentials_available: null
+    supported_did_methods: [example]
+    response_media_type: "application/json"
+    full_resolution_result: true
+    rate_limit_documented: false
+    rate_limit_notes: "Local controlled service; no third-party budget."
+    terms_notes: "Project-controlled mock resolver."
+    source: "this repository, src/avdr/resolver/app.py"
+    available: true
+    independence_notes: >-
+      Shares one Docker host with local-a and local-c. NOT independent.
+
+  - id: local-c
+    implementation_id: avdr-mock-resolver
+    operator: "self-hosted (this project, controlled test service)"
+    endpoint: "${LOCAL_C_URL:-http://127.0.0.1:8003}"
+    adapter: universal-resolver-v1
+    auth_required: false
+    credentials_available: null
+    supported_did_methods: [example]
+    response_media_type: "application/json"
+    full_resolution_result: true
+    rate_limit_documented: false
+    rate_limit_notes: "Local controlled service; no third-party budget."
+    terms_notes: "Project-controlled mock resolver."
+    source: "this repository, src/avdr/resolver/app.py"
+    available: true
+    independence_notes: >-
+      Shares one Docker host with local-a and local-b. NOT independent.

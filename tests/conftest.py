@@ -40,6 +40,55 @@ INJECTED_DELAY_MS = 150
 TIMEOUT_SLEEP_MS = 5000
 
 
+# --------------------------------------------------------------------------
+# Public-network guard
+#
+# The public resolver endpoint enforces 10 requests / 1800 s. The test suite
+# must never spend that budget, so outbound connections to anything other than
+# loopback are blocked for the whole session. This is enforced at the socket
+# layer rather than by convention, so a new test cannot quietly start calling
+# the Internet.
+# --------------------------------------------------------------------------
+
+_LOOPBACK = {"127.0.0.1", "::1", "localhost", "0.0.0.0"}
+
+
+class PublicNetworkBlocked(RuntimeError):
+    pass
+
+
+@pytest.fixture(scope="session", autouse=True)
+def block_public_network():
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+
+    def _check(address):
+        if isinstance(address, tuple) and address:
+            host = str(address[0])
+            if host not in _LOOPBACK:
+                raise PublicNetworkBlocked(
+                    f"test attempted an outbound connection to {host!r}; the "
+                    f"suite must make zero public-network calls (public "
+                    f"resolver budget is 10 requests / 1800 s)"
+                )
+
+    def guarded_connect(self, address):
+        _check(address)
+        return real_connect(self, address)
+
+    def guarded_connect_ex(self, address):
+        _check(address)
+        return real_connect_ex(self, address)
+
+    socket.socket.connect = guarded_connect
+    socket.socket.connect_ex = guarded_connect_ex
+    try:
+        yield
+    finally:
+        socket.socket.connect = real_connect
+        socket.socket.connect_ex = real_connect_ex
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))

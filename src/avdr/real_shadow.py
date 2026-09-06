@@ -37,18 +37,16 @@ from datetime import datetime, timezone
 
 import httpx
 
-from .adapters import get_adapter
 from .inventory import ProviderEntry
 from .models import RealProviderObservation, RealProviderTrialRecord
+from .probe import THROTTLE_STATUSES, probe_provider  # noqa: F401
 from .provenance import Provenance, new_trial_id
 
 NEW_CLIENT = "new-client"
 REUSED_CLIENT = "reused-client"
 
-# HTTP statuses treated as "back off now". 429 is the standard signal; 403 is
-# included because a public instance was observed returning it transiently
-# under repeated access.
-THROTTLE_STATUSES = frozenset({429, 403})
+# THROTTLE_STATUSES is re-exported from .probe so the measurement harness and
+# the routing service share one definition of "back off now".
 
 CONNECTION_MODES = {
     NEW_CLIENT: "a fresh AsyncClient and connection pool per trial; OS/DNS "
@@ -137,66 +135,15 @@ class RealProviderProbe:
         rate_limited: list[str] = []
 
         async def probe(position: int, provider: ProviderEntry):
-            adapter = get_adapter(provider.adapter)
-            url = provider.endpoint.rstrip("/") + adapter.resolve_path(did)
             launch_offset_ms = (time.perf_counter() - trial_started) * 1000.0
-            start_ts = _utc_now_iso()
-            started = time.perf_counter()
-
-            http_status = content_type = None
-            raw_bytes = body = parse_error = None
-            transport_ok = False
-            transport_outcome = "unknown"
-            retry_after = None
-
-            headers = {}
-            accept = adapter.accept_header()
-            if accept:
-                headers["Accept"] = accept
-
-            try:
-                response = await client.get(
-                    url, timeout=self.timeout_ms / 1000.0, headers=headers
-                )
-                http_status = response.status_code
-                content_type = response.headers.get("content-type")
-                raw_bytes = response.content
-                retry_after = response.headers.get("retry-after")
-                transport_ok = True
-                transport_outcome = "http_response"
-                # 429 is the documented throttle signal. 403 is also treated
-                # as one here: dev.uniresolver.io was observed returning a
-                # transient 403 under repeated access that cleared after a
-                # backoff, so it must trigger the same back-off discipline
-                # rather than being retried around.
-                if http_status in THROTTLE_STATUSES:
-                    rate_limited.append(provider.id)
-                try:
-                    body = response.json()
-                except ValueError as exc:
-                    parse_error = f"{type(exc).__name__}: {exc}"
-            except httpx.TimeoutException as exc:
-                transport_outcome = "timeout"
-                parse_error = None
-                body = None
-                _ = exc
-            except httpx.TransportError as exc:
-                transport_outcome = "connection_error"
-                parse_error = f"{type(exc).__name__}: {exc}"
-                body = None
-
-            latency_ms = (time.perf_counter() - started) * 1000.0
-
-            normalized = adapter.normalize(
-                requested_did=did,
-                http_status=http_status,
-                content_type=content_type,
-                raw_bytes=raw_bytes,
-                transport_outcome=transport_outcome,
-                transport_ok=transport_ok,
-                parse_error=parse_error,
-                body=body,
+            # Shared call path with the routing service: a shadow observation
+            # and a routing attempt are produced by identical code.
+            outcome = await probe_provider(
+                client, provider, did, self.timeout_ms, launch_offset_ms
             )
+            if outcome.throttled:
+                rate_limited.append(provider.id)
+            normalized = outcome.normalized
 
             observation = RealProviderObservation(
                 experiment_id=trial.experiment_id,
@@ -221,13 +168,13 @@ class RealProviderProbe:
                 implementation_id=provider.implementation_id,
                 resolver_endpoint_id=provider.endpoint,
                 launch_position=position,
-                launch_offset_ms=round(launch_offset_ms, 3),
-                start_ts=start_ts,
-                end_ts=_utc_now_iso(),
-                latency_ms=round(latency_ms, 3),
-                http_status=http_status,
-                content_type=content_type,
-                transport_outcome=transport_outcome,
+                launch_offset_ms=outcome.launch_offset_ms,
+                start_ts=outcome.start_ts,
+                end_ts=outcome.end_ts,
+                latency_ms=outcome.latency_ms,
+                http_status=outcome.http_status,
+                content_type=outcome.content_type,
+                transport_outcome=outcome.transport_outcome,
                 raw_response_hash=normalized.raw_response_hash,
                 raw_response_bytes=normalized.raw_response_bytes,
                 resolution_metadata=normalized.resolution_metadata,
@@ -241,9 +188,9 @@ class RealProviderProbe:
                 acceptance_checks=dict(normalized.acceptance.checks),
                 accepted=normalized.accepted,
                 acceptance_reason=normalized.acceptance.reason,
-                retry_after=retry_after,
+                retry_after=outcome.retry_after,
             )
-            return observation, normalized.raw_body
+            return observation, outcome.raw_body
 
         results = await asyncio.gather(
             *(probe(i, p) for i, p in enumerate(ordered)), return_exceptions=True

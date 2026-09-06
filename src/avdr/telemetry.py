@@ -19,6 +19,8 @@ from .models import (
     LogicalRequestRecord,
     RealProviderObservation,
     RealProviderTrialRecord,
+    RealRoutingAttempt,
+    RealRoutingRequestRecord,
     ResolverAttempt,
     ShadowObservation,
     ShadowTrialRecord,
@@ -37,6 +39,10 @@ REAL_TRIALS_FILENAME = "real_provider_trials.jsonl"
 REAL_OBSERVATIONS_FILENAME = "real_provider_observations.jsonl"
 # Exact response bodies, preserved outside the normalized records for audit.
 RAW_RESPONSES_FILENAME = "raw_responses.jsonl"
+# Real routing service records: user-facing traffic, kept apart from both the
+# mock router's traffic and the measurement harness's observations.
+REAL_ROUTING_REQUESTS_FILENAME = "real_routing_requests.jsonl"
+REAL_ROUTING_ATTEMPTS_FILENAME = "real_routing_attempts.jsonl"
 
 
 class TelemetrySink:
@@ -48,6 +54,9 @@ class TelemetrySink:
         self._requests: deque[dict] = deque(maxlen=memory_limit)
         self._attempts: dict[str, list[dict]] = {}
         self._attempt_order: deque[str] = deque(maxlen=memory_limit)
+        # Separate in-memory index for the real routing service.
+        self._routing_requests: deque[dict] = deque(maxlen=memory_limit)
+        self._routing_attempts: dict[str, list[dict]] = {}
 
     @property
     def requests_path(self) -> Path:
@@ -76,6 +85,14 @@ class TelemetrySink:
     @property
     def raw_responses_path(self) -> Path:
         return self.directory / RAW_RESPONSES_FILENAME
+
+    @property
+    def routing_requests_path(self) -> Path:
+        return self.directory / REAL_ROUTING_REQUESTS_FILENAME
+
+    @property
+    def routing_attempts_path(self) -> Path:
+        return self.directory / REAL_ROUTING_ATTEMPTS_FILENAME
 
     def _append(self, path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -171,6 +188,49 @@ class TelemetrySink:
                     "body": body,
                 },
             )
+
+    def record_routing_attempt(self, attempt: RealRoutingAttempt) -> None:
+        payload = attempt.model_dump(mode="json")
+        with self._lock:
+            self._append(self.routing_attempts_path, payload)
+            self._routing_attempts.setdefault(attempt.request_id, []).append(payload)
+
+    def record_routing_request(self, record: RealRoutingRequestRecord) -> None:
+        payload = record.model_dump(mode="json")
+        with self._lock:
+            self._append(self.routing_requests_path, payload)
+            self._routing_requests.append(payload)
+            # Bound the attempt index to the requests still retained.
+            live = {r["request_id"] for r in self._routing_requests}
+            for request_id in list(self._routing_attempts):
+                if request_id not in live:
+                    del self._routing_attempts[request_id]
+
+    def get_routing_request(self, request_id: str) -> dict | None:
+        with self._lock:
+            record = next(
+                (
+                    r
+                    for r in reversed(self._routing_requests)
+                    if r["request_id"] == request_id
+                ),
+                None,
+            )
+            attempts = list(self._routing_attempts.get(request_id, []))
+        if record is None and not attempts:
+            return None
+        return {"request": record, "attempts": attempts}
+
+    def recent_routing_requests(self, limit: int = 20) -> list[dict]:
+        with self._lock:
+            records = list(self._routing_requests)[-limit:]
+            return [
+                {
+                    "request": r,
+                    "attempts": list(self._routing_attempts.get(r["request_id"], [])),
+                }
+                for r in records
+            ]
 
     def counts(self) -> dict[str, int]:
         with self._lock:

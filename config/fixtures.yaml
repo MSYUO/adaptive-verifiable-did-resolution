@@ -61,10 +61,15 @@ fixtures:
     persistence_assumption: >-
       Observed on 2026-09-07 to return the DETERMINISTIC DEFAULT document
       derived from the address (a single EcdsaSecp256k1RecoveryMethod2020
-      verification method, empty didDocumentMetadata), i.e. no on-chain DID
-      events. Resolution still traverses the resolver's configured Ethereum
-      RPC provider, so it depends on that upstream being reachable. If DID
-      events were ever published for this address the document would change.
+      verification method, empty didDocumentMetadata), consistent with there
+      being no on-chain DID events for it.
+      WORDING PRECISION: did:ethr is RPC-backed BY IMPLEMENTATION DESIGN
+      (ERC-1056 event lookup), so this fixture is expected to depend on the
+      resolver's configured Ethereum RPC upstream. We did NOT trace the
+      upstream behaviour of any individual live request, so it is not claimed
+      that a given observed request definitely executed a fresh RPC call --
+      a driver-side cache could satisfy it. If DID events were ever published
+      for this address the document would change.
     expected_outcome: resolvable
 
   # ---------------- controlled negative cases ----------------

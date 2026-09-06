@@ -9,11 +9,10 @@ Local engineering prototype of a DID resolution router that returns the first
 > adaptive fan-out sizing (`adaptive-k`), no racing *in the routing path*, and
 > no blockchain. Those belong to later phases.
 >
-> Real public DID resolvers **are** now contacted, but only by the
-> compatibility qualification script and only to prove that the
-> adapter / normalization / acceptance / provenance path works. The components
-> that contact every resolver at once are measurement instruments; they are
-> never routing policies and never serve a request.
+> Real public DID resolvers **are** contacted, and there is now a user-facing
+> routing service over them with three baseline policies. `all-race` does
+> contact every candidate at once — it is the maximum-fan-out **control
+> baseline**, not the proposed adaptive algorithm.
 
 ---
 
@@ -79,7 +78,16 @@ Concretely:
 | `config/providers.yaml` | Real provider compatibility matrix |
 | `config/fixtures.yaml` | Real DID fixtures with documented provenance |
 | `scripts/measurement_qualification.py` | Measurement-apparatus qualification |
+| `src/avdr/probe.py` | One instrumented provider request (shared call path) |
+| `src/avdr/budget.py` | Rolling-window per-provider request budgets |
+| `src/avdr/candidates.py` | Capability-aware candidate selection |
+| `src/avdr/real_router/policies.py` | Real baseline policies (no I/O) |
+| `src/avdr/real_router/executor.py` | Sequential + concurrent execution |
+| `src/avdr/real_router/app.py` | **Real routing service API** |
+| `config/providers.local.yaml` | Local controlled provider inventory |
 | `scripts/real_did_qualification.py` | Real DID resolver compatibility qualification |
+| `scripts/real_routing_demo.py` | Controlled local routing demo (no public calls) |
+| `scripts/real_routing_smoke.py` | Minimal real public smoke (1 request) |
 
 Policy logic is kept free of HTTP concerns, and the router holds no
 scenario/fault knowledge: injected behaviour belongs to the resolvers.
@@ -296,6 +304,11 @@ come from live third-party endpoints rather than controlled local resolvers:
 - `real_provider_observations.jsonl` — one line per **provider observation**
 - `raw_responses.jsonl` — the exact bodies, preserved for audit
 
+The real routing service writes two more, again separated by record level:
+
+- `real_routing_requests.jsonl` — one line per **logical routing request**
+- `real_routing_attempts.jsonl` — one line per **provider attempt**
+
 One logical request may contain several attempts under failover; conflating
 the two would corrupt any later fan-out or burden analysis.
 
@@ -490,6 +503,85 @@ python scripts/real_did_qualification.py --pacing 5.0
 
 ---
 
+## Real routing service
+
+A user-facing service over the qualified real adapters. The mock router
+(`avdr.router.app`) is **untouched** and still serves the deterministic local
+path; both share the same separations — policy holds no I/O, transport holds
+no policy — and since this milestone both share one probe call path
+(`src/avdr/probe.py`), so a routing attempt and a shadow observation are
+produced by identical code.
+
+```bash
+python -m uvicorn avdr.real_router.app:app --port 8080     # PYTHONPATH=src
+curl -X POST localhost:8080/resolve -H 'content-type: application/json'      -d '{"did":"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "policy":"sequential-failover"}'
+curl localhost:8080/providers
+curl localhost:8080/policies
+curl localhost:8080/telemetry/requests/<request_id>
+```
+
+### Baseline policies (all three are baselines — none is adaptive)
+
+| Policy | Execution | Min providers | Behaviour |
+| --- | --- | --- | --- |
+| `single-static` | sequential | 1 | One explicitly selected provider. **No hidden failover.** |
+| `sequential-failover` | sequential | 1 | In order until structurally acceptable; nothing contacted after success. |
+| `all-race` | concurrent | **2** | All candidates at once; first *structurally acceptable* completion wins. |
+
+`all-race` is the maximum-fan-out control this project exists to improve on,
+not the proposed algorithm. It requires two providers — racing one provider is
+not a race, and pretending otherwise would fabricate redundancy.
+
+**First acceptable, not first response.** A faster completion that fails
+`w3c-basic-v1` does not win; the race continues past it.
+
+### Capability-aware candidate selection
+
+No provider is used merely because it is configured. Each is evaluated and
+either becomes a candidate or is skipped with a typed reason:
+
+`provider_unavailable` · `method_not_supported` ·
+`auth_required_no_credentials` · `unknown_adapter` · `rate_budget_exhausted`
+
+**A skipped provider is not a failed provider** — it was never called.
+Exclusions and runtime failures live in separate telemetry fields and are
+never pooled.
+
+When a policy needs more redundancy than exists, the service returns HTTP 409
+`INSUFFICIENT_QUALIFIED_PROVIDERS` with `qualified_provider_count` and the full
+skip list, rather than silently degrading. A single-provider request also
+carries a `SINGLE_QUALIFIED_PROVIDER` warning.
+
+### Request budgets
+
+Budgets are part of *eligibility*, not an afterthought: a provider whose
+rolling-window budget would be exceeded is skipped **before** it is called.
+The public endpoint's disclosed limit (10 requests / 1800 s) is enforced this
+way. Loopback providers are unlimited — no third party's budget is spent.
+
+### Cancellation honesty
+
+After a winner is found, outstanding requests are cancelled. Cancellation is
+recorded as `canceled_before_dispatch` or
+`canceled_after_dispatch_provider_side_unknown` — once a request is on the
+wire the provider may already have done the work, and cancellation is never
+reported as if it had prevented that. Cancelled attempts carry `null` latency,
+never a fabricated `0`.
+
+### Demos
+
+```bash
+docker compose up -d
+python scripts/real_routing_demo.py     # Scenarios A/B/C, zero public calls
+python scripts/real_routing_smoke.py    # ONE real public request
+```
+
+The smoke script reports `REAL_E2E_DEFERRED_RATE_BUDGET` if the provider
+signals throttling. **A deferral is not a pass.**
+
+---
+
 ## How to run tests
 
 ```bash
@@ -508,9 +600,13 @@ python scripts/measurement_qualification.py
 python scripts/real_did_qualification.py --pacing 5.0
 ```
 
-Unit and integration tests never touch the public Internet: real provider
-shapes are exercised through `httpx.MockTransport`. Only the explicit
-qualification script above makes real endpoint calls.
+**The test suite makes zero public-network calls, and this is enforced rather
+than assumed:** a session-wide autouse fixture in `tests/conftest.py` blocks
+every outbound socket connection to a non-loopback address, so a new test
+cannot quietly start spending the public resolver's 10 req / 1800 s budget.
+Real provider shapes are exercised through `httpx.MockTransport` and local
+loopback services. Only the explicit qualification/smoke scripts above make
+real endpoint calls.
 
 `scripts/e2e_smoke.py` exercises scenarios N, D, F, I, T and X, checks router
 behaviour and telemetry for each, prints a PASS/FAIL line per gate, writes
@@ -531,6 +627,13 @@ regression check, then adds: `PASS_PROVENANCE_BINDING`,
 `PASS_W3C_BASIC_ACCEPTANCE`, `PASS_REAL_ERROR_NORMALIZATION`,
 `PASS_CONNECTION_MODE_PROVENANCE`, `PASS_REAL_PROVIDER_PROVENANCE`,
 `PASS_EXISTING_MEASUREMENT_REGRESSION`.
+
+`scripts/real_routing_demo.py` and `scripts/real_routing_smoke.py` cover the
+routing gates: `PASS_REAL_ROUTER_API`, `PASS_CAPABILITY_AWARE_SELECTION`,
+`PASS_REAL_SINGLE_STATIC_BASELINE`, `PASS_REAL_SEQUENTIAL_FAILOVER_BASELINE`,
+`PASS_REAL_ALL_RACE_BASELINE`, `PASS_FIRST_ACCEPTABLE_SEMANTICS`,
+`PASS_PROVIDER_BUDGET_ENFORCEMENT`, `PASS_REAL_ROUTING_TELEMETRY`,
+`PASS_PROVIDER_STATUS_ENDPOINT`.
 
 ---
 
