@@ -1,0 +1,13 @@
+{
+  "frozen_estimator_artifact_sha256": "sha256:532cc2a5269bb39a8b9e6d1656fbdf08967b4115a6fb22784a5e6d07c0f60545",
+  "frozen_estimator_metadata_file_sha256": "sha256:75ca95d66722ec21b8d72e8e4f80c3c87103cb9f34b019825345390518449975",
+  "frozen_policy_file_sha256": "sha256:e63d75ea31bac6c80dd8a6dd2c7c65868b7a42dfef89bc353dbafcbbec370b2b",
+  "injection_config_hash_v3": "sha256:cc2209f1741e5023d177606940a2b7eabdc2ec52a7717c52083773e7ebac254f",
+  "feature_schema_hash_v2": "sha256:efb68d8cfd2fbcd5701e61cf7f6c189abaa514eac9a2a34754840e3ada4f9408",
+  "estimator_config_hash": "sha256:2c73f54dc82b6983d3b1842443f0a81c6bc28cda123e9f1cf19d5bbdfcd3c23e",
+  "v4_raw_evidence_sha256": "sha256:d892874d295386df58094a0a1bb1f659cbc203d8bb8ff957c0be857e1fa2f7fb",
+  "v4_raw_evidence_repo_path": "artifacts/learning_v4/v4_confirmatory_report.json",
+  "v3_holdout_raw_sha256": "sha256:7d246d82dedd148782b10f78a8d9c99f3c8108a1927a723cfdc8796aea6a0765",
+  "v3_pipeline_raw_sha256": "sha256:0bc555a647a6026d98a5118ca38ac9de3fd00576a3d07d58aeb325dab80e4a06",
+  "note": "The V3/V4 raw run reports live under artifacts/ and are untracked experiment output. Their content is bound here by SHA-256, and the evidence needed for every published number is copied into data/ as CSV so this package is self-contained."
+}

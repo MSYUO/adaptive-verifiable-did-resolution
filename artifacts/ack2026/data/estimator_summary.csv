@@ -1,0 +1,9 @@
+field,value
+frozen_estimator,b1-rolling-empirical
+calibration,None
+selection_rule_source,scripts/v3_pipeline.py
+best_by_validation_brier,b2-ewma-backoff
+selected_family,b1-rolling-empirical
+selected_variant,uncalibrated
+v4_holdout_brier,0.153663
+v4_holdout_ece,0.053396

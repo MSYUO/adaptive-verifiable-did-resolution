@@ -1,0 +1,65 @@
+{
+  "artifact_name": "AVDR ACK 2026 evidence freeze",
+  "artifact_version": "1.0.0",
+  "purpose": "Reproducible evidence package for an ACK 2026 paper: V3 discovery and V4 independent frozen confirmatory replication of adaptive resolver fan-out in a controlled local DID resolution environment.",
+  "generated_at": "2026-09-07T01:40:04.660746+00:00",
+  "paper_target": "ACK 2026",
+  "source_repository": "https://github.com/MSYUO/adaptive-verifiable-did-resolution.git",
+  "source_branch": "main",
+  "source_HEAD": "8b2aa822167ffab68959161f222fb40b6544f592",
+  "v3_source_commits": {
+    "pipeline_and_freeze": "42e925499d56940ef7507c6d840a5a2619d16cb9",
+    "holdout": "f7737bb20bb9aed6f6204296881f51eb0011c4a9"
+  },
+  "v4_execution_commit": "8b2aa822167ffab68959161f222fb40b6544f592",
+  "v4_trial_count": 2640,
+  "v4_episode_count": 120,
+  "frozen_estimator_id": "b1-rolling-empirical",
+  "frozen_estimator_is_not_ml": true,
+  "frozen_calibration": null,
+  "frozen_comparator": "local-b,local-c",
+  "deadline_tau_ms": 250.0,
+  "target_slo_probability": 0.9,
+  "exploration_interval_R": 8,
+  "cold_start_rule": "3 mandatory all-provider warmup trials per episode, charged as calls",
+  "acceptance_profile": "w3c-basic-v1 (structural)",
+  "generator_config_hash": "sha256:cc2209f1741e5023d177606940a2b7eabdc2ec52a7717c52083773e7ebac254f",
+  "feature_schema_hash": "sha256:efb68d8cfd2fbcd5701e61cf7f6c189abaa514eac9a2a34754840e3ada4f9408",
+  "bootstrap_method": "paired bootstrap over episodes (clusters), not trial rows",
+  "bootstrap_resamples": 10000,
+  "bootstrap_seed": 20260909,
+  "raw_data_paths": {
+    "v4_raw_report_untracked": "artifacts/learning_v4/v4_confirmatory_report.json",
+    "v4_raw_report_sha256": "sha256:d892874d295386df58094a0a1bb1f659cbc203d8bb8ff957c0be857e1fa2f7fb",
+    "v4_trials_csv_in_package": "data/v4_trials.csv",
+    "v4_episode_metrics_csv_in_package": "data/v4_episode_metrics.csv"
+  },
+  "analysis_script": "analysis/recompute_ack_results.py",
+  "figure_script": "analysis/make_figures.py",
+  "metadata_script": "analysis/build_package_metadata.py",
+  "figures": [
+    "figures/fig1_architecture.pdf",
+    "figures/fig2_success_vs_calls.pdf",
+    "figures/fig3_selected_k_by_state.pdf"
+  ],
+  "figure_sources": [
+    "figures/source/fig2_success_vs_calls.csv",
+    "figures/source/fig3_selected_k_by_state.csv"
+  ],
+  "tables": [
+    "tables/table_primary_results.csv",
+    "tables/table_paired_outcomes.csv",
+    "tables/table_static_baselines.csv",
+    "tables/table_estimator_results.csv"
+  ],
+  "validation_status": "PASS",
+  "known_limitations": [
+    "Controlled local environment only; no real public DID resolver performance is established.",
+    "V3 is discovery and V4 is confirmatory; they must not be pooled.",
+    "Static baselines are counterfactual reconstructions on the same trials; only the adaptive policy ran closed-loop.",
+    "Adaptive is charged for warmup and exploration; stateless baselines have no observation stream to charge.",
+    "The delta-success 95% CI lower bound lies below the 0.02 materiality reference, so the effect is reliably positive but not established as materially large.",
+    "The operational meaning of an episode (router restart frequency) is not measured, and warmup cost is sensitive to it.",
+    "See provenance/known_errata.md for a frozen-metadata erratum."
+  ]
+}

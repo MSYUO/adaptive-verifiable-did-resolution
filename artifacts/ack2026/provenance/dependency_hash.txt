@@ -1,0 +1,3 @@
+sha256:83267cc3b6d2b42267ad3df4cef1db9cecf56915745c31eda48f3e6c21486e00
+files: requirements-dev.txt, requirements.txt
+python: 3.12

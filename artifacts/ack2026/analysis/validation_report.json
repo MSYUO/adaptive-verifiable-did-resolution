@@ -1,0 +1,83 @@
+{
+  "status": "PASS",
+  "recomputed_from": "artifacts/learning_v4/v4_confirmatory_report.json",
+  "raw_evidence_sha256": "sha256:d892874d295386df58094a0a1bb1f659cbc203d8bb8ff957c0be857e1fa2f7fb",
+  "trial_count": 2640,
+  "episode_count": 120,
+  "unique_primary_keys": 2640,
+  "duplicate_primary_keys": 0,
+  "paired_table_sums_to_N": true,
+  "adaptive_marginal_reconciles": true,
+  "fixed_marginal_reconciles": true,
+  "cost_components_reconcile": true,
+  "cost_component_breakdown": {
+    "execution_calls": 3230,
+    "exploration_calls_including_warmup": 1800,
+    "of_which_warmup_calls": 1080,
+    "of_which_scheduled_exploration_calls": 720,
+    "fallback_calls_subset_of_execution": 1462,
+    "total": 5030,
+    "semantics": "total = execution + exploration. Warmup calls are recorded in the exploration channel; fallback (best-effort) calls are recorded in the execution channel, so they are components of those two totals rather than a third addend."
+  },
+  "fixed_calls_equal_N_times_subset_size": true,
+  "bootstrap_episode_set_matches_records": true,
+  "crosscheck_vs_v4_run": {
+    "N": {
+      "recomputed": 2640,
+      "stored_by_v4_run": 2640,
+      "agree": true
+    },
+    "n11": {
+      "recomputed": 2150,
+      "stored_by_v4_run": 2150,
+      "agree": true
+    },
+    "n10": {
+      "recomputed": 139,
+      "stored_by_v4_run": 139,
+      "agree": true
+    },
+    "n01": {
+      "recomputed": 53,
+      "stored_by_v4_run": 53,
+      "agree": true
+    },
+    "n00": {
+      "recomputed": 298,
+      "stored_by_v4_run": 298,
+      "agree": true
+    },
+    "adaptive_success_rate": {
+      "recomputed": 0.8670454545454546,
+      "stored_by_v4_run": 0.8670454545454546,
+      "agree": true
+    },
+    "adaptive_calls_per_request": {
+      "recomputed": 1.9053030303030303,
+      "stored_by_v4_run": 1.9053030303030303,
+      "agree": true
+    },
+    "fixed_success_rate": {
+      "recomputed": 0.834469696969697,
+      "stored_by_v4_run": 0.834469696969697,
+      "agree": true
+    },
+    "fixed_calls_per_request": {
+      "recomputed": 2.0,
+      "stored_by_v4_run": 2.0,
+      "agree": true
+    },
+    "delta_success": {
+      "recomputed": 0.03257575757575759,
+      "stored_by_v4_run": 0.03257575757575759,
+      "agree": true
+    },
+    "delta_calls": {
+      "recomputed": -0.09469696969696972,
+      "stored_by_v4_run": -0.09469696969696972,
+      "agree": true
+    }
+  },
+  "violations": [],
+  "oracle_feasible_count": 2353
+}

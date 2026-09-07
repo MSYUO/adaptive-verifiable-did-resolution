@@ -1,0 +1,21 @@
+{
+  "resamples": 10000,
+  "analysis_seed": 20260909,
+  "resampling_unit": "episode (cluster)",
+  "note": "Tail proportions below are bootstrap resample fractions. They are NOT p-values and no null hypothesis test is implied.",
+  "delta_success_point": 0.032576,
+  "delta_success_ci95": [
+    0.012121,
+    0.054924
+  ],
+  "delta_calls_ci95": [
+    -0.172348,
+    -0.01553
+  ],
+  "delta_success_bootstrap_mean": 0.032694,
+  "delta_calls_bootstrap_mean": -0.094891,
+  "resample_fraction_delta_success_le_0": 0.0002,
+  "resample_fraction_delta_calls_ge_0": 0.0118,
+  "delta_calls_point": -0.094697,
+  "materiality_reference_success": 0.02
+}

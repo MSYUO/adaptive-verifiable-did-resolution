@@ -1,0 +1,25 @@
+{
+  "environment": "controlled local DID resolver environment",
+  "providers": "3 local mock resolvers on one shared Docker host",
+  "documents": "synthetic control documents",
+  "conditions": "injected dynamic conditions (CONTROLLED INJECTION)",
+  "public_providers_contacted": false,
+  "acceptance_profile": "w3c-basic-v1 (structural)",
+  "deadline_tau_ms": 250.0,
+  "target_slo_probability": 0.9,
+  "exploration_interval_R": 8,
+  "cold_start_trials": 3,
+  "frozen_estimator": "b1-rolling-empirical",
+  "frozen_calibration": null,
+  "frozen_comparator": "local-b,local-c",
+  "v4_trials": 2640,
+  "v4_episodes": 120,
+  "not_established": [
+    "real public DID resolver performance",
+    "production DID SLO",
+    "independent real providers",
+    "ML outperforming heuristics",
+    "W3C certification",
+    "Byzantine fault tolerance"
+  ]
+}

@@ -1,0 +1,9 @@
+policy,success_count,success_rate,mean_calls_per_request,delta_success_vs_best_fixed_k2,delta_calls_vs_best_fixed_k2
+fixed{local-a},1753,0.664015,1.0,-0.170455,-1.0
+fixed{local-b},1650,0.625,1.0,-0.20947,-1.0
+fixed{local-c},1571,0.595076,1.0,-0.239394,-1.0
+"fixed{local-a,local-b}",2136,0.809091,2.0,-0.025379,0.0
+"fixed{local-a,local-c}",2193,0.830682,2.0,-0.003788,0.0
+"BEST_FIXED_K2{local-b,local-c}",2203,0.83447,2.0,0.0,0.0
+"all-race{local-a,local-b,local-c}",2353,0.891288,3.0,0.056818,1.0
+adaptive-best-effort (frozen V3 policy),2289,0.867045,1.905303,0.032576,-0.094697

@@ -1,0 +1,26 @@
+{
+  "source_repository": "https://github.com/MSYUO/adaptive-verifiable-did-resolution.git",
+  "source_branch": "main",
+  "source_HEAD_at_package_build": "8b2aa822167ffab68959161f222fb40b6544f592",
+  "working_tree_clean_at_build": false,
+  "v3_pipeline_commit": "42e925499d56940ef7507c6d840a5a2619d16cb9",
+  "v3_pipeline_git_dirty": false,
+  "v3_holdout_commit": "f7737bb20bb9aed6f6204296881f51eb0011c4a9",
+  "v3_holdout_git_dirty": false,
+  "v4_execution_commit": "8b2aa822167ffab68959161f222fb40b6544f592",
+  "v4_execution_git_dirty": false,
+  "recent_history": [
+    "8b2aa82 feat: V4 confirmatory replication apparatus + V3 exposure diagnostic",
+    "f7737bb chore: freeze V3 estimator and policy before final holdout",
+    "42e9254 feat: V3 symmetric generator + adaptive value GO/NO-GO apparatus",
+    "0c05c97 chore: freeze V2 estimator artifact before final holdout",
+    "46055cf feat: closed-loop partial-feedback routing (V2 protocol)",
+    "c7cf6e8 docs: describe the prospective estimator pipeline",
+    "35b46b0 chore: freeze estimator artifact metadata before final holdout",
+    "39d44d8 chore: track frozen estimator metadata produced by the pipeline",
+    "aaa4d10 fix: actually apply Platt calibration instead of only labelling it",
+    "34359e8 feat: prospective subset-probability estimator (controlled qualification)",
+    "9b5b935 feat: adaptive minimum-set decision engine (controlled engineering)",
+    "3ec824d feat: real-provider routing service with first-acceptable baselines"
+  ]
+}

@@ -1,0 +1,6 @@
+estimator,validation_brier,validation_log_loss,validation_ece,commit_rate,frozen_for_v3_v4
+b0-global-rate,0.177073,0.541651,0.1,0.0,False
+b1-rolling-empirical,0.16625,0.505356,0.077586,0.1579,True
+b2-ewma-backoff,0.161299,0.544243,0.131213,0.5947,False
+m1-logistic-v2,0.172432,0.523938,0.102909,0.3316,False
+m2-hist-gradient-boosting-v2,0.209678,0.611613,0.167414,0.4316,False

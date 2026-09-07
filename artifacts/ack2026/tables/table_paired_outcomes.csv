@@ -1,0 +1,17 @@
+quantity,value,note
+n11,2150,"adaptive success, fixed success"
+n10,139,"adaptive success, fixed fail"
+n01,53,"adaptive fail, fixed success"
+n00,298,"adaptive fail, fixed fail"
+N,2640,paired logical trials
+net_success_difference,0.032576,(n10 - n01)/N
+delta_success,0.032576,"adaptive - BEST_FIXED_K2, all logical requests"
+delta_calls,-0.094697,"adaptive - BEST_FIXED_K2, calls per request"
+delta_success_ci95_low,0.012121,episode-cluster bootstrap
+delta_success_ci95_high,0.054924,episode-cluster bootstrap
+delta_calls_ci95_low,-0.172348,episode-cluster bootstrap
+delta_calls_ci95_high,-0.01553,episode-cluster bootstrap
+bootstrap_unit,episode,"clusters resampled, NOT individual trial rows"
+bootstrap_resamples,10000,
+raw_additional_successes,86,"adaptive minus fixed, absolute trials"
+raw_calls_saved,250,absolute provider calls

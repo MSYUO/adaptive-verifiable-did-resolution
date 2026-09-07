@@ -1,0 +1,8 @@
+subset,size,success_count,success_rate,calls_per_request
+local-a,1,1753,0.664015,1.0
+local-b,1,1650,0.625,1.0
+local-c,1,1571,0.595076,1.0
+"local-a,local-b",2,2136,0.809091,2.0
+"local-a,local-c",2,2193,0.830682,2.0
+"local-b,local-c",2,2203,0.83447,2.0
+"local-a,local-b,local-c",3,2353,0.891288,3.0

@@ -1,0 +1,11 @@
+field,value
+role,discovery / policy development (NOT confirmatory)
+trials,264
+adaptive_success,0.837121
+adaptive_calls_per_request,1.8977
+best_fixed_k2,"local-b,local-c"
+best_fixed_k2_success,0.80303
+best_fixed_k2_calls_per_request,2.0
+delta_success,0.03409099999999998
+delta_calls,-0.10230000000000006
+verdict,GO

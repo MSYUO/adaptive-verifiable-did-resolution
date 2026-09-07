@@ -1,0 +1,9 @@
+policy,success_rate,calls_per_request,highlight
+fixed{local-a},0.664015,1.0,
+fixed{local-b},0.625,1.0,
+fixed{local-c},0.595076,1.0,
+"fixed{local-a,local-b}",0.809091,2.0,
+"fixed{local-a,local-c}",0.830682,2.0,
+"BEST_FIXED_K2{local-b,local-c}",0.83447,2.0,frozen_comparator
+"all-race{local-a,local-b,local-c}",0.891288,3.0,
+adaptive-best-effort,0.867045,1.905303,adaptive

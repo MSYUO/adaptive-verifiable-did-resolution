@@ -1,0 +1,6 @@
+cell,meaning,count
+n11,adaptive success AND fixed success,2150
+n10,adaptive success AND fixed fail,139
+n01,adaptive fail AND fixed success,53
+n00,adaptive fail AND fixed fail,298
+N,total paired logical trials,2640
