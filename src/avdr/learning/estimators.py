@@ -418,3 +418,133 @@ class SigmoidCalibratedEstimator(BaseSubsetEstimator):
             "coef": self.coef,
             "intercept": self.intercept,
         }
+
+
+# ---------------------------------------------------------------------------
+# V2: partial-feedback estimators
+# ---------------------------------------------------------------------------
+
+CONTEXT_KEY_V2 = "partial_context"
+
+
+class SklearnSubsetEstimatorV2(SklearnSubsetEstimator):
+    """Learned estimator over the V2 partial-observability feature contract.
+
+    Identical machinery to V1 except that features come from the deployment
+    history (which may be stale or partial) rather than a full-information
+    shadow history.
+    """
+
+    def _partial_context(self, context: Mapping[str, Any] | None):
+        if context is None:
+            return None
+        return context.get(CONTEXT_KEY_V2)
+
+    def fit(self, rows) -> "SklearnSubsetEstimatorV2":
+        X = np.array([r.features for r in rows], dtype=float)
+        y = np.array([r.target for r in rows], dtype=int)
+        self.model.fit(X, y)
+        self._fitted = True
+        return self
+
+    def estimate(self, subset, context=None):
+        from .closedloop import build_row_v2
+
+        partial = self._partial_context(context)
+        if partial is None:
+            return None
+        row = np.array([build_row_v2(partial, subset)], dtype=float)
+        return self._finalize(float(self.model.predict_proba(row)[0, 1]))
+
+    def config_hash(self) -> str:
+        from .closedloop import feature_schema_hash_v2
+
+        return config_hash(
+            {
+                "id": self.estimator_id,
+                "version": self.estimator_version,
+                "feature_schema_hash": feature_schema_hash_v2(),
+                "params": {k: str(v) for k, v in sorted(self.model.get_params().items())},
+            }
+        )
+
+
+def build_logistic_v2(seed: int = 20260908) -> SklearnSubsetEstimatorV2:
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    pipeline = Pipeline(
+        [
+            ("scale", StandardScaler()),
+            ("clf", LogisticRegression(max_iter=2000, C=1.0, random_state=seed)),
+        ]
+    )
+    return SklearnSubsetEstimatorV2(pipeline, "m1-logistic-v2", "v2")
+
+
+def build_gradient_boosting_v2(seed: int = 20260908) -> SklearnSubsetEstimatorV2:
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    model = HistGradientBoostingClassifier(
+        max_iter=200, learning_rate=0.08, max_depth=4, random_state=seed
+    )
+    return SklearnSubsetEstimatorV2(model, "m2-hist-gradient-boosting-v2", "v2")
+
+
+class BackoffSubsetRateEstimator(BaseSubsetEstimator):
+    """B1/B2 backoff that GUARANTEES complete subset coverage.
+
+    Under partial feedback a subset may have no observed history at all. The
+    backoff chain is explicit and hierarchical -- never an independence
+    formula:
+
+        1. this subset's own observed history (EWMA)
+        2. the training rate for subsets of the same SIZE
+        3. the global training rate
+
+    Each level is a real empirical quantity over observed outcomes, so
+    coverage is complete without inventing a composition rule.
+    """
+
+    estimator_id = "b2-ewma-backoff"
+    estimator_version = "v2"
+
+    def __init__(self, alpha: float = 0.35) -> None:
+        self.alpha = alpha
+        self.global_rate = 0.5
+        self.size_rates: dict[int, float] = {}
+
+    def fit(self, rows) -> "BackoffSubsetRateEstimator":
+        targets = [r.target for r in rows]
+        self.global_rate = float(np.mean(targets)) if targets else 0.5
+        buckets: dict[int, list[int]] = {}
+        for row in rows:
+            buckets.setdefault(len(row.subset), []).append(row.target)
+        self.size_rates = {k: float(np.mean(v)) for k, v in buckets.items()}
+        return self
+
+    def _prior(self, subset) -> float:
+        return self.size_rates.get(len(tuple(subset)), self.global_rate)
+
+    def estimate(self, subset, context=None):
+        key = subset_key(subset)
+        history = (context or {}).get(HISTORY_KEY, {})
+        observed = history.get(key, [])
+        value = self._prior(key)
+        for outcome in observed:
+            value = self.alpha * outcome + (1.0 - self.alpha) * value
+        return self._finalize(value)
+
+    def config_hash(self) -> str:
+        return config_hash(
+            {
+                "id": self.estimator_id,
+                "alpha": self.alpha,
+                "global_rate": round(self.global_rate, 9),
+                "size_rates": sorted(
+                    [k, round(v, 9)] for k, v in self.size_rates.items()
+                ),
+                "backoff": "subset-history -> size-rate -> global-rate",
+            }
+        )
