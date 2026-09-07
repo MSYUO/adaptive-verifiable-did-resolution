@@ -1,0 +1,10 @@
+{
+  "BEST_FIXED_K2": "local-b,local-c",
+  "target_slo_probability": 0.9,
+  "deadline_tau_ms": 250.0,
+  "exploration_interval_R": 8,
+  "cold_start_trials": 3,
+  "estimator_family": "b1-rolling-empirical",
+  "calibration": "uncalibrated",
+  "artifact_sha256": "sha256:532cc2a5269bb39a8b9e6d1656fbdf08967b4115a6fb22784a5e6d07c0f60545"
+}
