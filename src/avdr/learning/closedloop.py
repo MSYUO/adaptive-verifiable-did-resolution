@@ -48,9 +48,19 @@ AUDIT_COLLECTION = "audit_collection"
 WARMUP = "warmup"
 EVALUATOR_ONLY = "evaluator_only"
 
+# Sources that represent requests the policy ACTUALLY made, and may therefore
+# enter the deployment history. `warmup` counts: it is a real cold-start
+# request and its calls are charged like any other.
 ONLINE_SOURCES = frozenset(
-    {SELECTED_EXECUTION, SCHEDULED_EXPLORATION, AUDIT_COLLECTION}
+    {SELECTED_EXECUTION, SCHEDULED_EXPLORATION, AUDIT_COLLECTION, WARMUP}
 )
+
+# [DESIGN CHOICE] Cold start, fixed before the V3 holdout. V2 showed a
+# self-reinforcing trap: with an empty history the backoff priors sit below
+# target, the router abstains, nothing is observed, and the history stays
+# empty. The first COLD_START_TRIALS trials of every episode are therefore a
+# mandatory all-provider audit, tagged `warmup` and CHARGED as real calls.
+COLD_START_TRIALS = 3
 
 FEATURE_SCHEMA_VERSION_V2 = "prerequest-partial-v2"
 

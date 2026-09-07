@@ -29,8 +29,10 @@ from typing import Callable, Sequence
 
 from ..adaptive.optimizer import SELECTED, MinimumSetOptimizer
 from .closedloop import (
+    COLD_START_TRIALS,
     SCHEDULED_EXPLORATION,
     SELECTED_EXECUTION,
+    WARMUP,
     SERVICE_BEST_EFFORT,
     STRICT_SLO,
     DeploymentObservedHistory,
@@ -77,6 +79,7 @@ def run_closed_loop(
     exploration_interval: int | None = None,
     optimizer: MinimumSetOptimizer | None = None,
     collect_traces: int = 0,
+    cold_start_trials: int = 0,
 ) -> ClosedLoopResult:
     optimizer = optimizer or MinimumSetOptimizer()
     subsets = all_subsets()
@@ -91,6 +94,29 @@ def run_closed_loop(
             if not record.complete:
                 continue
             counter += 1
+
+            # ---- 0. cold start: mandatory all-provider audit --------------
+            # V2 showed a self-reinforcing abstention trap on an empty
+            # history. These are REAL requests: tagged `warmup` and charged.
+            if counter <= cold_start_trials:
+                oracle = oracle_for(record, tau_ms)
+                deployment.append(reveal_subset(record, PROVIDERS, WARMUP))
+                within = {p: oracle.provider_within_deadline[p] for p in PROVIDERS}
+                known = update_subset_history(
+                    subset_history, set(PROVIDERS), within, subsets
+                )
+                result.known_subset_updates += known
+                result.outcomes.append(
+                    ClosedLoopOutcome(
+                        episode_id=episode_id, trial_index=record.trial_index,
+                        committed=True, selected_subset=tuple(sorted(PROVIDERS)),
+                        satisfied=oracle.oracle_feasible, status="WARMUP",
+                        oracle_feasible=oracle.oracle_feasible,
+                        predicted_feasible=None, degradation_mode="warmup",
+                        execution_calls=0, exploration_calls=len(PROVIDERS),
+                    )
+                )
+                continue
 
             # ---- 1. features from the deployment history only -------------
             context = build_partial_context(deployment, tau_ms, record.trial_index)
