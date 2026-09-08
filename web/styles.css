@@ -413,6 +413,41 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .detail-title-row { margin-bottom: 18px; }
 .provider-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 
+.audit-section { background: rgba(85, 217, 232, 0.035); }
+.audit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.audit-field {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 14px;
+  background: rgba(5, 18, 28, 0.58);
+}
+.audit-field strong { color: var(--text); font-size: .86rem; }
+.audit-field code {
+  display: block;
+  overflow: hidden;
+  color: var(--cyan);
+  font: .78rem "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.audit-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.secondary-button {
+  min-height: 38px;
+  border: 1px solid rgba(85, 217, 232, .45);
+  border-radius: 8px;
+  padding: 0 13px;
+  color: var(--cyan);
+  background: var(--cyan-soft);
+  font-weight: 750;
+}
+.secondary-button:disabled { cursor: wait; opacity: .6; }
+.audit-scope { margin: 14px 0 0; color: var(--muted); font-size: .76rem; line-height: 1.55; }
+
 .provider-chip {
   border: 1px solid rgba(85,217,232,.3);
   border-radius: 8px;
@@ -499,6 +534,7 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
   .result-identifiers { width: 100%; justify-content: space-between; }
   .evidence-notice { margin-right: 18px; margin-left: 18px; }
   .result-summary, .metrics-grid { grid-template-columns: 1fr; }
+  .audit-grid { grid-template-columns: 1fr; }
   .trace-head { display: none; }
   .attempt-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; }
   .attempt-outcome { text-align: right; }

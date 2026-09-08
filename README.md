@@ -561,12 +561,20 @@ self-contained dashboard contract:
   request's full eligible set;
 - `evidence.mode` — `real` or `controlled_demo`; local inventories can never
   be configured as real; and
-- `audit` — the audit-recorder receipt.  The default is explicitly
+- `audit` — additive receipt status. The presenter app records locally; an
+  app constructed with `NullAuditRecorder` explicitly returns
   `recorded: false`, `status: not_configured`.
 
-The audit boundary accepts only a hashed DID, selected provider identifiers,
-a policy/version hash, a result hash, and a timestamp.  No blockchain client
-is included and raw telemetry is not sent to an audit sink.
+The audit boundary accepts only a nonce-salted DID commitment, selected
+provider identifiers, policy/estimator provenance, a commitment to the exact
+normalized returned result, and request metadata. The default presenter app
+records canonical `avdr-audit-v1` receipts in a process-local hash chain and
+can verify them through `GET /audit/receipts/{receipt_id}` and
+`POST /audit/verify`. Its active blockchain anchor is explicitly
+`not_configured`; raw DIDs, DID documents, and telemetry never cross the
+anchor interface. See
+[`docs/AUDIT_PROVENANCE.md`](docs/AUDIT_PROVENANCE.md) for the serialization,
+privacy, verification, and trust-scope contract.
 
 PowerShell local run:
 

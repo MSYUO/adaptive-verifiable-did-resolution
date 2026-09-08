@@ -24,6 +24,12 @@ const ui = {
   resultDid: document.querySelector("#resultDid"),
   acceptance: document.querySelector("#acceptanceValue"),
   metrics: document.querySelector("#metricsGrid"),
+  auditReceiptStatus: document.querySelector("#auditReceiptStatus"),
+  auditReceiptHash: document.querySelector("#auditReceiptHash"),
+  auditVerificationStatus: document.querySelector("#auditVerificationStatus"),
+  auditAnchorStatus: document.querySelector("#auditAnchorStatus"),
+  verifyReceiptButton: document.querySelector("#verifyReceiptButton"),
+  auditVerifyMessage: document.querySelector("#auditVerifyMessage"),
   selectionMode: document.querySelector("#selectionMode"),
   selected: document.querySelector("#selectedProviders"),
   trace: document.querySelector("#attemptTrace"),
@@ -45,10 +51,12 @@ const policyOrder = [
 ];
 
 let adaptiveRuntimeStatus = null;
+let currentAuditReceiptId = null;
 
 ui.form.addEventListener("submit", resolveDid);
 ui.strategies.addEventListener("change", syncTargetVisibility);
 ui.did.addEventListener("input", refreshAdaptiveLabel);
+ui.verifyReceiptButton.addEventListener("click", verifyCurrentReceipt);
 initialize();
 
 async function initialize() {
@@ -297,11 +305,13 @@ function renderResult(data) {
     metric("Calls used", numberOrNa(cost.calls_used), "Dispatched provider calls"),
     metric("Calls saved", numberOrNa(cost.calls_saved_vs_all_race), "Versus this request's eligible set"),
     metric(
-      "Blockchain audit",
+      "Audit receipt",
       audit.recorded ? "Recorded" : "Not recorded",
-      audit.reference || humanize(audit.status || "not configured"),
+      audit.receipt_hash || humanize(audit.status || "not configured"),
     ),
   ]);
+
+  renderAudit(audit);
 
   ui.selectionMode.textContent = `Selection: ${humanize(selection.selection_mode || "N/A")}`;
   ui.selected.replaceChildren();
@@ -326,6 +336,48 @@ function renderResult(data) {
     null,
     2,
   );
+}
+
+function renderAudit(audit) {
+  currentAuditReceiptId = audit.recorded ? audit.receipt_id : null;
+  ui.auditReceiptStatus.textContent = audit.recorded ? "Recorded" : "Not recorded";
+  ui.auditReceiptHash.textContent = audit.receipt_hash || "N/A";
+  ui.auditReceiptHash.title = audit.receipt_hash || "";
+  ui.auditVerificationStatus.textContent = audit.integrity_verified
+    ? "Local integrity verified"
+    : audit.recorded
+      ? "Verification pending"
+      : "Not available";
+  ui.auditAnchorStatus.textContent = humanize(
+    audit.anchor?.status || "not configured",
+  );
+  ui.verifyReceiptButton.hidden = !currentAuditReceiptId;
+  ui.verifyReceiptButton.disabled = false;
+  ui.auditVerifyMessage.textContent = "";
+}
+
+async function verifyCurrentReceipt() {
+  if (!currentAuditReceiptId) return;
+  ui.verifyReceiptButton.disabled = true;
+  ui.auditVerifyMessage.textContent = "Recomputing local receipt integrity…";
+  try {
+    const response = await fetch("/audit/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ receipt_id: currentAuditReceiptId }),
+    });
+    const verification = await response.json();
+    if (!response.ok || !verification.valid) {
+      throw new Error(verification.error || "Receipt integrity mismatch");
+    }
+    ui.auditVerificationStatus.textContent = "Local integrity verified";
+    ui.auditVerifyMessage.textContent = "Receipt integrity verified locally.";
+  } catch (error) {
+    ui.auditVerificationStatus.textContent = "Verification failed";
+    ui.auditVerifyMessage.textContent = error.message;
+  } finally {
+    ui.verifyReceiptButton.disabled = false;
+  }
 }
 
 function renderMetrics(items) {

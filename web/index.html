@@ -155,6 +155,46 @@
 
         <div id="metricsGrid" class="metrics-grid"></div>
 
+        <section id="auditSection" class="detail-section audit-section" aria-labelledby="auditTitle">
+          <div class="detail-title-row">
+            <div>
+              <span class="step-number">A</span>
+              <h3 id="auditTitle">Audit / Provenance</h3>
+            </div>
+            <span class="quiet-label">Local integrity, not DID truth</span>
+          </div>
+          <div class="audit-grid">
+            <div class="audit-field">
+              <span class="metric-label">Audit receipt</span>
+              <strong id="auditReceiptStatus">Not recorded</strong>
+            </div>
+            <div class="audit-field audit-field--hash">
+              <span class="metric-label">Receipt hash</span>
+              <code id="auditReceiptHash">N/A</code>
+            </div>
+            <div class="audit-field">
+              <span class="metric-label">Verification</span>
+              <strong id="auditVerificationStatus">Not available</strong>
+            </div>
+            <div class="audit-field">
+              <span class="metric-label">Blockchain anchor</span>
+              <strong id="auditAnchorStatus">Not configured</strong>
+            </div>
+          </div>
+          <div class="audit-actions">
+            <button id="verifyReceiptButton" class="secondary-button" type="button" hidden>
+              Verify receipt
+            </button>
+            <span id="auditVerifyMessage" class="quiet-label" role="status"></span>
+          </div>
+          <p class="audit-scope">
+            Verification checks that the recorded request metadata, routing
+            decision, policy identity, and returned-result commitment match
+            this local audit record. It does not make the DID or resolver
+            blockchain-verified.
+          </p>
+        </section>
+
         <section class="detail-section" aria-labelledby="selectionTitle">
           <div class="detail-title-row">
             <div>

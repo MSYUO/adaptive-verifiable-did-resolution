@@ -17,6 +17,14 @@ from typing import Any
 import httpx
 
 from ..adapters import ADAPTERS
+from ..audit import (
+    AuditReceipt,
+    AuditRecorder,
+    NullAuditRecorder,
+    build_commitment,
+    build_estimator_identity,
+    build_policy_identity,
+)
 from ..budget import BudgetRegistry
 from ..candidates import CandidateSet, select_candidates
 from ..config import REPO_ROOT
@@ -149,6 +157,7 @@ class ControlledDemoOrchestrator:
         *,
         inventory: ProviderInventory,
         runtime: FrozenAdaptiveRuntime,
+        audit_recorder: AuditRecorder | None = None,
         timeout_ms: int = 2000,
     ) -> None:
         expected = ["local-a", "local-b", "local-c"]
@@ -165,6 +174,7 @@ class ControlledDemoOrchestrator:
 
         self.inventory = inventory
         self.runtime = runtime
+        self.audit_recorder = audit_recorder or NullAuditRecorder()
         self.budgets = BudgetRegistry(inventory)
         self.executor = RealRoutingExecutor(
             acceptance_profile=PROFILE_W3C_BASIC_V1,
@@ -269,7 +279,7 @@ class ControlledDemoOrchestrator:
                 decision_history_version=snapshot.version,
                 evidence_mode=CONTROLLED_DEMO,
             )
-            return self._response(
+            return await self._response(
                 scenario=scenario,
                 did=did,
                 plan=plan,
@@ -381,7 +391,7 @@ class ControlledDemoOrchestrator:
         provenance.acceptance_profile = PROFILE_W3C_BASIC_V1
         return provenance
 
-    def _response(
+    async def _response(
         self,
         *,
         scenario: DemoScenario,
@@ -392,11 +402,6 @@ class ControlledDemoOrchestrator:
         bootstrap_observations: int,
         committed_history_version: int,
     ) -> dict[str, Any]:
-        audit = {
-            "recorded": False,
-            "status": "controlled_demo_not_recorded",
-            "reference": None,
-        }
         body = result.winning_payload if isinstance(result.winning_payload, dict) else {}
         response = {
             "request_id": result.record.request_id,
@@ -456,17 +461,56 @@ class ControlledDemoOrchestrator:
                 )
             },
         }
-        response.update(
-            build_service_fields(
-                did=did,
-                plan=plan,
-                candidate_set=candidates,
-                result=result,
-                acceptance_profile=PROFILE_W3C_BASIC_V1,
-                evidence_mode=CONTROLLED_DEMO,
-                audit=audit,
-            )
+        service_fields = build_service_fields(
+            did=did,
+            plan=plan,
+            candidate_set=candidates,
+            result=result,
+            acceptance_profile=PROFILE_W3C_BASIC_V1,
+            evidence_mode=CONTROLLED_DEMO,
+            audit=AuditReceipt(False, "pending").to_dict(),
         )
+        try:
+            nonce_source = getattr(self.audit_recorder, "new_nonce", None)
+            commitment = build_commitment(
+                request_id=result.record.request_id,
+                did=did,
+                strategy=plan.policy,
+                selected_resolver_ids=service_fields["selection"][
+                    "selected_providers"
+                ],
+                launch_order=list(plan.attempt_order()),
+                candidate_count=service_fields["selection"]["candidate_count"],
+                policy_identity=build_policy_identity(self.policy, plan),
+                estimator_identity=build_estimator_identity(
+                    self.policy,
+                    plan,
+                    self.runtime.describe(CONTROLLED_DEMO),
+                ),
+                estimator_config_hash=plan.metadata.get("estimator_config_hash"),
+                acceptance_profile=PROFILE_W3C_BASIC_V1,
+                returned_provider=service_fields["result"]["returned_by"],
+                normalized_result=service_fields["result"],
+                calls_used=service_fields["cost"]["calls_used"],
+                evidence_mode=CONTROLLED_DEMO,
+                timestamp=result.record.timestamp,
+                selection_mode=service_fields["selection"]["selection_mode"],
+                target_success=service_fields["selection"]["target_success"],
+                estimated_success=service_fields["selection"]["estimated_success"],
+                request_nonce=nonce_source() if nonce_source is not None else None,
+            )
+            audit_receipt = await self.audit_recorder.record(commitment)
+            if (
+                not audit_receipt.recorded
+                and audit_receipt.status == "not_configured"
+            ):
+                audit_receipt = AuditReceipt(
+                    False, "controlled_demo_not_recorded"
+                )
+        except Exception:  # audit failure never changes the scenario result
+            audit_receipt = AuditReceipt(False, "recording_failed")
+        service_fields["audit"] = audit_receipt.to_dict()
+        response.update(service_fields)
         if not result.success:
             response["error"] = "noAcceptableResult"
         return response

@@ -147,6 +147,11 @@ for (const scenarioId of ["normal", "slow_failure", "fast_unacceptable"]) {
     `document.querySelector('#demoMessage')?.textContent.includes('Controlled run completed') && ` +
       `document.querySelector('#resultDid')?.textContent.includes('${scenarioId}')`,
   );
+  await waitFor("!document.querySelector('#verifyReceiptButton')?.hidden");
+  await evaluate("document.querySelector('#verifyReceiptButton').click()");
+  await waitFor(
+    "document.querySelector('#auditVerifyMessage')?.textContent.includes('verified locally')",
+  );
   const state = await evaluate(`(() => {
     const rows = [...document.querySelectorAll('.attempt-row')].map((row) => ({
       provider: row.querySelector('code')?.textContent,
@@ -163,6 +168,13 @@ for (const scenarioId of ["normal", "slow_failure", "fast_unacceptable"]) {
       resultStatus: document.querySelector('#resultStatus')?.textContent,
       acceptance: document.querySelector('#acceptanceValue')?.textContent,
       metrics: document.querySelector('#metricsGrid')?.innerText,
+      audit: {
+        receipt: document.querySelector('#auditReceiptStatus')?.textContent,
+        receiptHash: document.querySelector('#auditReceiptHash')?.textContent,
+        verification: document.querySelector('#auditVerificationStatus')?.textContent,
+        verifyMessage: document.querySelector('#auditVerifyMessage')?.textContent,
+        anchor: document.querySelector('#auditAnchorStatus')?.textContent,
+      },
       rows,
       resultVisible: !document.querySelector('#resultPanel')?.hidden,
     };

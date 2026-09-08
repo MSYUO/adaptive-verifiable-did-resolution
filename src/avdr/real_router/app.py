@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import httpx
 from fastapi import FastAPI, Query
@@ -29,8 +30,12 @@ from ..adapters import ADAPTERS
 from ..audit import (
     AuditReceipt,
     AuditRecorder,
+    LocalAuditRecorder,
     NullAuditRecorder,
+    build_estimator_identity,
     build_commitment,
+    build_policy_identity,
+    verify_receipt_payload,
 )
 from ..budget import BudgetRegistry
 from ..candidates import (
@@ -85,6 +90,14 @@ class DemoRunRequest(BaseModel):
     did: str = Field(default="did:example:controlled-demo", min_length=1)
 
 
+class AuditVerifyRequest(BaseModel):
+    receipt_id: str | None = None
+    receipt: dict[str, Any] | None = None
+    receipt_hash: str | None = None
+    disclosed_did: str | None = None
+    disclosed_result: dict[str, Any] | None = None
+
+
 def create_app(
     inventory: ProviderInventory | None = None,
     sink: TelemetrySink | None = None,
@@ -137,6 +150,7 @@ def create_app(
         ControlledDemoOrchestrator(
             inventory=demo_inventory,
             runtime=adaptive_runtime,
+            audit_recorder=audit_recorder,
             timeout_ms=min(timeout_ms, 2000),
         )
         if demo_inventory is not None and adaptive_runtime is not None
@@ -197,6 +211,11 @@ def create_app(
             "provider_inventory_hash": inventory.inventory_hash(),
             "experiment_id": experiment_id,
             "attempt_timeout_ms": timeout_ms,
+            "audit": (
+                audit_recorder.describe()
+                if hasattr(audit_recorder, "describe")
+                else {"recorder": type(audit_recorder).__name__}
+            ),
             "adaptive_runtime": _adaptive_service_status(
                 runtime=adaptive_runtime,
                 policies=policies,
@@ -304,6 +323,69 @@ def create_app(
     @app.get("/telemetry/recent")
     async def recent(limit: int = Query(default=20, ge=1, le=200)):
         return {"records": sink.recent_routing_requests(limit)}
+
+    @app.get("/audit/receipts/{receipt_id}")
+    async def get_audit_receipt(receipt_id: str):
+        getter = getattr(audit_recorder, "get", None)
+        if getter is None:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "auditReceiptLookupUnavailable"},
+            )
+        stored = await getter(receipt_id)
+        if stored is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "unknownAuditReceipt"},
+            )
+        return stored
+
+    @app.post("/audit/verify")
+    async def verify_audit_receipt(payload: AuditVerifyRequest):
+        if payload.receipt_id is not None:
+            verifier = getattr(audit_recorder, "verify", None)
+            if verifier is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "auditReceiptVerificationUnavailable"},
+                )
+            verification = await verifier(
+                payload.receipt_id,
+                disclosed_did=payload.disclosed_did,
+                disclosed_result=payload.disclosed_result,
+            )
+            if verification is None:
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": "unknownAuditReceipt"},
+                )
+            return {
+                "receipt_id": payload.receipt_id,
+                "verification": "local_record",
+                **verification,
+            }
+
+        if payload.receipt is None or payload.receipt_hash is None:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": "receiptOrReceiptIdRequired",
+                    "detail": (
+                        "provide receipt_id, or provide both receipt and receipt_hash"
+                    ),
+                },
+            )
+        verification = verify_receipt_payload(
+            payload.receipt,
+            payload.receipt_hash,
+            disclosed_did=payload.disclosed_did,
+            disclosed_result=payload.disclosed_result,
+        )
+        return {
+            "verification": "standalone_payload",
+            "recorded": False,
+            **verification,
+        }
 
     @app.get("/demo/scenarios")
     async def demo_scenarios() -> dict:
@@ -532,23 +614,6 @@ def create_app(
         winner = next((a for a in result.attempts if a.accepted), None)
         body = result.winning_payload if isinstance(result.winning_payload, dict) else {}
 
-        commitment = build_commitment(
-            request_id=result.record.request_id,
-            did=did,
-            selected_providers=list(plan.attempt_order()),
-            policy=plan.policy,
-            policy_metadata=plan.metadata,
-            result_hash=winner.normalized_document_hash if winner else None,
-            timestamp=result.record.timestamp,
-        )
-        try:
-            audit_receipt = await audit_recorder.record(commitment)
-        except Exception:  # audit integration must not suppress a DID result
-            audit_receipt = AuditReceipt(
-                recorded=False,
-                status="recording_failed",
-            )
-
         response = {
             "request_id": result.record.request_id,
             "requested_did": did,
@@ -576,18 +641,56 @@ def create_app(
             "warnings": warnings,
         }
 
-        # Add the product-facing DTO while retaining every legacy field above.
-        response.update(
-            build_service_fields(
-                did=did,
-                plan=plan,
-                candidate_set=candidate_set,
-                result=result,
-                acceptance_profile=PROFILE_W3C_BASIC_V1,
-                evidence_mode=evidence_mode,
-                audit=audit_receipt.to_dict(),
-            )
+        # Build the exact normalized service result first. The audit receipt
+        # commits to this object after execution; it does not redefine result
+        # normalization or acceptance.
+        service_fields = build_service_fields(
+            did=did,
+            plan=plan,
+            candidate_set=candidate_set,
+            result=result,
+            acceptance_profile=PROFILE_W3C_BASIC_V1,
+            evidence_mode=evidence_mode,
+            audit=AuditReceipt(False, "pending").to_dict(),
         )
+        try:
+            runtime_metadata = (
+                adaptive_runtime.describe(evidence_mode)
+                if adaptive_runtime is not None
+                and isinstance(policy, RealAdaptiveMinSet)
+                else None
+            )
+            nonce_source = getattr(audit_recorder, "new_nonce", None)
+            commitment = build_commitment(
+                request_id=result.record.request_id,
+                did=did,
+                strategy=plan.policy,
+                selected_resolver_ids=service_fields["selection"][
+                    "selected_providers"
+                ],
+                launch_order=list(plan.attempt_order()),
+                candidate_count=service_fields["selection"]["candidate_count"],
+                policy_identity=build_policy_identity(policy, plan),
+                estimator_identity=build_estimator_identity(
+                    policy, plan, runtime_metadata
+                ),
+                estimator_config_hash=plan.metadata.get("estimator_config_hash"),
+                acceptance_profile=PROFILE_W3C_BASIC_V1,
+                returned_provider=service_fields["result"]["returned_by"],
+                normalized_result=service_fields["result"],
+                calls_used=service_fields["cost"]["calls_used"],
+                evidence_mode=evidence_mode,
+                timestamp=result.record.timestamp,
+                selection_mode=service_fields["selection"]["selection_mode"],
+                target_success=service_fields["selection"]["target_success"],
+                estimated_success=service_fields["selection"]["estimated_success"],
+                request_nonce=nonce_source() if nonce_source is not None else None,
+            )
+            audit_receipt = await audit_recorder.record(commitment)
+        except Exception:  # audit failure must not suppress a DID result
+            audit_receipt = AuditReceipt(False, "recording_failed")
+        service_fields["audit"] = audit_receipt.to_dict()
+        response.update(service_fields)
 
         if runtime_record is not None:
             response["runtime_history"] = {
@@ -829,6 +932,7 @@ def create_default_app() -> FastAPI:
     return create_app(
         inventory=load_provider_inventory(inventory_path),
         adaptive_runtime=adaptive_runtime,
+        audit_recorder=LocalAuditRecorder(),
         demo_inventory=(
             load_provider_inventory(REPO_ROOT / "config" / "providers.local.yaml")
             if adaptive_runtime is not None

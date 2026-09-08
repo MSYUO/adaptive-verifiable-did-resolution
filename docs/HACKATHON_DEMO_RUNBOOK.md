@@ -53,8 +53,11 @@ real observed history. Do not warm real history with demo observations.
 
 The acceptance profile is `w3c-basic-v1`. It is structural acceptance—not
 cryptographic verification, consensus, canonical truth, or blockchain proof.
-The audit card should say `Not recorded` / `Not configured` for real requests,
-and controlled runs are explicitly not recorded.
+The audit panel should show a locally recorded receipt, a readable
+`sha256:...` commitment, `Local integrity verified`, and blockchain anchor
+`Not configured`. This proves only receipt integrity. It does not make the DID
+or resolver blockchain-verified. Use **Verify receipt** to recompute the
+stored local receipt and hash-chain integrity through the backend.
 
 ## 5. Scenario 1 — Normal
 
