@@ -28,6 +28,11 @@ const ui = {
   auditReceiptHash: document.querySelector("#auditReceiptHash"),
   auditVerificationStatus: document.querySelector("#auditVerificationStatus"),
   auditAnchorStatus: document.querySelector("#auditAnchorStatus"),
+  auditAnchorNetwork: document.querySelector("#auditAnchorNetwork"),
+  auditAnchorTransaction: document.querySelector("#auditAnchorTransaction"),
+  auditAnchorBlock: document.querySelector("#auditAnchorBlock"),
+  auditAnchorMatch: document.querySelector("#auditAnchorMatch"),
+  auditAnchorFinality: document.querySelector("#auditAnchorFinality"),
   verifyReceiptButton: document.querySelector("#verifyReceiptButton"),
   auditVerifyMessage: document.querySelector("#auditVerifyMessage"),
   selectionMode: document.querySelector("#selectionMode"),
@@ -339,6 +344,7 @@ function renderResult(data) {
 }
 
 function renderAudit(audit) {
+  const anchor = audit.anchor || {};
   currentAuditReceiptId = audit.recorded ? audit.receipt_id : null;
   ui.auditReceiptStatus.textContent = audit.recorded ? "Recorded" : "Not recorded";
   ui.auditReceiptHash.textContent = audit.receipt_hash || "N/A";
@@ -349,7 +355,37 @@ function renderAudit(audit) {
       ? "Verification pending"
       : "Not available";
   ui.auditAnchorStatus.textContent = humanize(
-    audit.anchor?.status || "not configured",
+    anchor.status || "not configured",
+  );
+  ui.auditAnchorNetwork.textContent = anchor.network === "ethereum-sepolia"
+    ? "Ethereum Sepolia"
+    : "N/A";
+  ui.auditAnchorTransaction.replaceChildren();
+  const transactionHash = anchor.transaction_hash || anchor.transaction_id;
+  const safeExplorer = typeof anchor.explorer_url === "string"
+    && anchor.explorer_url.startsWith("https://sepolia.etherscan.io/tx/");
+  if (transactionHash && safeExplorer && anchor.onchain_receipt_match === true) {
+    const link = document.createElement("a");
+    link.href = anchor.explorer_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = transactionHash;
+    link.title = transactionHash;
+    ui.auditAnchorTransaction.append(link);
+  } else {
+    ui.auditAnchorTransaction.textContent = transactionHash || "N/A";
+    ui.auditAnchorTransaction.title = transactionHash || "";
+  }
+  ui.auditAnchorBlock.textContent = Number.isInteger(anchor.block_number)
+    ? String(anchor.block_number)
+    : "N/A";
+  ui.auditAnchorMatch.textContent = anchor.onchain_receipt_match === true
+    ? "Verified"
+    : anchor.onchain_receipt_match === false
+      ? "Mismatch"
+      : "Not available";
+  ui.auditAnchorFinality.textContent = humanize(
+    anchor.finality_status || "not verified",
   );
   ui.verifyReceiptButton.hidden = !currentAuditReceiptId;
   ui.verifyReceiptButton.disabled = false;

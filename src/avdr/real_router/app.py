@@ -49,6 +49,7 @@ from ..adaptive.optimizer import TIE_BREAK_RULE, CostModel, validate_target
 from ..inventory import ProviderInventory, load_provider_inventory
 from ..profiles import CHECK_ORDER, PROFILE_W3C_BASIC_V1
 from ..provenance import build_provenance, new_experiment_id
+from ..sepolia_anchor import build_audit_anchor_from_env
 from ..telemetry import TelemetrySink
 from .adaptive_policy import AdaptivePlanningError, RealAdaptiveMinSet
 from .demo import ControlledDemoError, ControlledDemoOrchestrator
@@ -173,6 +174,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        validate_anchor = getattr(audit_recorder, "validate_anchor", None)
+        if callable(validate_anchor):
+            await validate_anchor()
         async with httpx.AsyncClient() as client:
             app.state.client = client
             yield
@@ -929,10 +933,11 @@ def create_default_app() -> FastAPI:
     """Create the normal MVP app, enabling the verified frozen runtime."""
     inventory_path = os.environ.get("AVDR_PROVIDER_INVENTORY")
     adaptive_runtime = try_load_frozen_adaptive_runtime()
+    audit_anchor = build_audit_anchor_from_env()
     return create_app(
         inventory=load_provider_inventory(inventory_path),
         adaptive_runtime=adaptive_runtime,
-        audit_recorder=LocalAuditRecorder(),
+        audit_recorder=LocalAuditRecorder(anchor=audit_anchor),
         demo_inventory=(
             load_provider_inventory(REPO_ROOT / "config" / "providers.local.yaml")
             if adaptive_runtime is not None

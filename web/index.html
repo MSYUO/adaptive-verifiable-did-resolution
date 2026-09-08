@@ -177,8 +177,28 @@
               <strong id="auditVerificationStatus">Not available</strong>
             </div>
             <div class="audit-field">
-              <span class="metric-label">Blockchain anchor</span>
+              <span class="metric-label">Public blockchain anchor</span>
               <strong id="auditAnchorStatus">Not configured</strong>
+            </div>
+            <div class="audit-field">
+              <span class="metric-label">Anchor network</span>
+              <strong id="auditAnchorNetwork">N/A</strong>
+            </div>
+            <div class="audit-field audit-field--hash">
+              <span class="metric-label">Transaction</span>
+              <span id="auditAnchorTransaction">N/A</span>
+            </div>
+            <div class="audit-field">
+              <span class="metric-label">Block</span>
+              <strong id="auditAnchorBlock">N/A</strong>
+            </div>
+            <div class="audit-field">
+              <span class="metric-label">On-chain receipt match</span>
+              <strong id="auditAnchorMatch">Not available</strong>
+            </div>
+            <div class="audit-field">
+              <span class="metric-label">Finality</span>
+              <strong id="auditAnchorFinality">Not verified</strong>
             </div>
           </div>
           <div class="audit-actions">
@@ -190,8 +210,9 @@
           <p class="audit-scope">
             Verification checks that the recorded request metadata, routing
             decision, policy identity, and returned-result commitment match
-            this local audit record. It does not make the DID or resolver
-            blockchain-verified.
+            this local audit record. A public anchor commits only to its
+            receipt hash. It does not make the DID document canonical or make
+            the DID or resolver blockchain-verified.
           </p>
         </section>
 

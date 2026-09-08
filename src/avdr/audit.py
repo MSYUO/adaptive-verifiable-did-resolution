@@ -208,9 +208,37 @@ class AnchorResult:
     status: str
     network: str | None = None
     transaction_id: str | None = None
+    chain_id: int | None = None
+    transaction_hash: str | None = None
+    block_number: int | None = None
+    block_hash: str | None = None
+    sender: str | None = None
+    destination: str | None = None
+    value_wei: int | None = None
+    receipt_hash: str | None = None
+    onchain_receipt_hash: str | None = None
+    onchain_receipt_match: bool | None = None
+    verification: str | None = None
+    confirmations: int | None = None
+    finality_status: str | None = None
+    explorer_url: str | None = None
+    estimated_gas: int | None = None
+    gas_limit: int | None = None
+    max_fee_per_gas_wei: int | None = None
+    maximum_gas_cost_wei: int | None = None
+    wallet_balance_before_wei: int | None = None
+    transaction_receipt_status: int | None = None
+    error_code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        values = asdict(self)
+        base = {
+            "status": values.pop("status"),
+            "network": values.pop("network"),
+            "transaction_id": values.pop("transaction_id"),
+        }
+        base.update({key: value for key, value in values.items() if value is not None})
+        return base
 
 
 class AuditAnchor(Protocol):
@@ -332,11 +360,12 @@ class LocalAuditRecorder:
             anchor_metadata = future_anchor_payload(digest, payload)
             try:
                 anchor = await self._anchor.anchor(digest, anchor_metadata)
-                status = (
-                    "recorded"
-                    if anchor.status == "not_configured"
-                    else "recorded_and_anchor_processed"
-                )
+                if anchor.status == "not_configured":
+                    status = "recorded"
+                elif anchor.status == "failed":
+                    status = "recorded_anchor_failed"
+                else:
+                    status = "recorded_and_anchor_processed"
             except Exception:  # local record remains valid when anchoring fails
                 anchor = AnchorResult(status="anchoring_failed")
                 status = "recorded_anchor_failed"
@@ -433,7 +462,7 @@ class LocalAuditRecorder:
         }
 
     def describe(self) -> dict[str, Any]:
-        return {
+        description = {
             "recorder": "local_append_only_audit_chain",
             "storage": "process_memory",
             "durable": False,
@@ -442,6 +471,16 @@ class LocalAuditRecorder:
             "receipt_count": len(self._entries),
             "anchor": type(self._anchor).__name__,
         }
+        describe_anchor = getattr(self._anchor, "describe", None)
+        if callable(describe_anchor):
+            description["anchor_configuration"] = describe_anchor()
+        return description
+
+    async def validate_anchor(self) -> None:
+        """Fail service startup closed when a configured anchor is on a wrong chain."""
+        validator = getattr(self._anchor, "validate_network", None)
+        if callable(validator):
+            await validator()
 
 
 def build_commitment(

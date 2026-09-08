@@ -48,9 +48,10 @@ receipt bytes only in process memory and links each entry through
 append-only audit chain, not a blockchain. Receipts disappear on process
 restart and are not durable across workers.
 
-`NullAnchor` is the active anchor implementation. It reports
-`status: not_configured`; no external chain request occurs. The future
-`AuditAnchor` interface receives only:
+`NullAnchor` remains the safe default anchor implementation. It reports
+`status: not_configured`; no external chain request occurs. The optional
+`SepoliaCalldataAnchor` uses the same `AuditAnchor` interface, which receives
+only:
 
 ```json
 {
@@ -63,6 +64,13 @@ restart and are not durable across workers.
 
 Raw DIDs, DID documents, resolver bodies, attempt telemetry, and IP addresses
 are outside that boundary.
+
+The Sepolia adapter wraps those existing values in a separate canonical
+`avdr-anchor-v1` calldata object and independently reads the mined transaction
+back before reporting a match. This is additive service metadata and does not
+change the `avdr-audit-v1` receipt schema or its canonical hash. See
+[`BLOCKCHAIN_ANCHOR.md`](BLOCKCHAIN_ANCHOR.md) for configuration, transaction
+safety, verification, and trust boundaries.
 
 ## Verification API
 

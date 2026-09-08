@@ -5,3 +5,4 @@ httpx==0.28.1
 pydantic==2.10.4
 PyYAML==6.0.2
 numpy==2.2.1
+eth-account==0.14.0

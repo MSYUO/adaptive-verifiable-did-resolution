@@ -6,8 +6,9 @@ Local engineering prototype of a DID resolution router that returns the first
 > **Scope so far:** multi-resolver baseline routing + controlled fault
 > injection → measurement-apparatus qualification → real DID resolver
 > compatibility qualification + the frozen, non-ML `adaptive-min-set` runtime.
-> There is deliberately no new model training, retuning, durable runtime
-> history, or blockchain recording.
+> There is deliberately no new model training, retuning, or durable runtime
+> history. Optional audit anchoring is Sepolia-only, zero-value, and disabled
+> by default; there is no mainnet or smart-contract integration.
 >
 > Real public DID resolvers **are** contacted, and there is now a user-facing
 > routing service over them with three baseline policies. `all-race` does
@@ -89,6 +90,9 @@ Concretely:
 | `scripts/qualify_real_dids.py` | P9 bounded opt-in real-DID compatibility + receipt verification |
 | `scripts/browser_real_compatibility_qa.mjs` | P9 real dashboard screenshot/receipt QA |
 | `docs/REAL_DID_COMPATIBILITY.md` | Measured presenter evidence and compatibility-only claim boundary |
+| `src/avdr/sepolia_anchor.py` | Optional zero-value Sepolia calldata anchor and independent readback |
+| `scripts/anchor_sepolia_receipt.py` | Explicit one-transaction Sepolia smoke |
+| `docs/BLOCKCHAIN_ANCHOR.md` | Anchor configuration, privacy, safety, and trust boundary |
 | `scripts/real_routing_demo.py` | Controlled local routing demo (no public calls) |
 | `src/avdr/adaptive/estimator.py` | Layer A — subset estimates `q_hat(S\|x)` |
 | `src/avdr/adaptive/optimizer.py` | Layer B — minimum-set optimizer + cost models |
@@ -573,8 +577,9 @@ provider identifiers, policy/estimator provenance, a commitment to the exact
 normalized returned result, and request metadata. The default presenter app
 records canonical `avdr-audit-v1` receipts in a process-local hash chain and
 can verify them through `GET /audit/receipts/{receipt_id}` and
-`POST /audit/verify`. Its active blockchain anchor is explicitly
-`not_configured`; raw DIDs, DID documents, and telemetry never cross the
+`POST /audit/verify`. Its default blockchain anchor is explicitly
+`not_configured`; an optional Sepolia anchor receives the same minimal
+commitment boundary. Raw DIDs, DID documents, and telemetry never cross the
 anchor interface. See
 [`docs/AUDIT_PROVENANCE.md`](docs/AUDIT_PROVENANCE.md) for the serialization,
 privacy, verification, and trust-scope contract.
@@ -589,6 +594,14 @@ measured compatibility evidence and presenter screenshots.
 ```bash
 python scripts/qualify_real_dids.py --execute-live --out <temporary-report.json>
 ```
+
+The audit recorder also supports an optional Ethereum Sepolia calldata anchor.
+It is disabled by default, sends zero value to the same dedicated test wallet,
+and places only an `avdr-anchor-v1` receipt commitment in calldata. A successful
+readback proves only that the on-chain commitment matches the local receipt;
+it does not validate the DID or resolver. Configuration and the explicit
+one-transaction smoke are documented in
+[`docs/BLOCKCHAIN_ANCHOR.md`](docs/BLOCKCHAIN_ANCHOR.md).
 
 PowerShell local run:
 
