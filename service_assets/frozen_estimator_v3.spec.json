@@ -1,0 +1,27 @@
+{
+  "schema_version": "avdr-serving-estimator-spec-v1",
+  "artifact_name": "frozen-estimator-v3",
+  "packaging_method": "typed_spec",
+  "estimator": {
+    "class_name": "avdr.learning.estimators.RollingEmpiricalEstimator",
+    "estimator_id": "b1-rolling-empirical",
+    "estimator_version": "v1",
+    "parameters": {
+      "window": 10,
+      "prior": 0.6879699248120301,
+      "prior_weight": 2.0
+    },
+    "estimator_config_hash": "sha256:2c73f54dc82b6983d3b1842443f0a81c6bc28cda123e9f1cf19d5bbdfcd3c23e"
+  },
+  "serving_policy": {
+    "class_name": "avdr.real_router.adaptive_policy.RealAdaptiveMinSet",
+    "optimizer_class": "avdr.adaptive.optimizer.MinimumSetOptimizer",
+    "target_slo_probability": 0.9,
+    "deadline_tau_ms": 250.0
+  },
+  "source_provenance": {
+    "source_pickle_sha256": "sha256:532cc2a5269bb39a8b9e6d1656fbdf08967b4115a6fb22784a5e6d07c0f60545",
+    "frozen_estimator_policy_commit": "f7737bb20bb9aed6f6204296881f51eb0011c4a9",
+    "ack_evidence_commit": "5e9945257426ad53f8144e1afb46f9aac2ca8e19"
+  }
+}

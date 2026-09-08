@@ -5,9 +5,9 @@ Local engineering prototype of a DID resolution router that returns the first
 
 > **Scope so far:** multi-resolver baseline routing + controlled fault
 > injection → measurement-apparatus qualification → real DID resolver
-> compatibility qualification. There is deliberately no machine learning, no
-> adaptive fan-out sizing (`adaptive-k`), no racing *in the routing path*, and
-> no blockchain. Those belong to later phases.
+> compatibility qualification + the frozen, non-ML `adaptive-min-set` runtime.
+> There is deliberately no new model training, retuning, durable runtime
+> history, or blockchain recording.
 >
 > Real public DID resolvers **are** contacted, and there is now a user-facing
 > routing service over them with three baseline policies. `all-race` does
@@ -90,6 +90,8 @@ Concretely:
 | `src/avdr/adaptive/estimator.py` | Layer A — subset estimates `q_hat(S\|x)` |
 | `src/avdr/adaptive/optimizer.py` | Layer B — minimum-set optimizer + cost models |
 | `src/avdr/real_router/adaptive_policy.py` | `adaptive-min-set` policy (wiring only) |
+| `src/avdr/real_router/runtime_adaptive.py` | Typed frozen-estimator reconstruction + isolated observed-history adapter |
+| `service_assets/frozen_estimator_v3.spec.json` | Pinned, non-executable serving specification for the frozen estimator |
 | `scripts/real_routing_smoke.py` | Minimal real public smoke (1 request) |
 | `scripts/adaptive_qualification.py` | Controlled adaptive decision-layer qualification |
 | `src/avdr/learning/environment.py` | Controlled stochastic episode environment |
@@ -532,6 +534,60 @@ curl localhost:8080/policies
 curl localhost:8080/telemetry/requests/<request_id>
 ```
 
+### Hackathon service dashboard
+
+The real routing service now serves a dependency-free dashboard from the same
+process at `http://127.0.0.1:8080/dashboard/` (and redirects `/` there).  There
+is no separate frontend server or cross-origin configuration.  The screen
+loads `/health`, `/providers`, and `/policies`, exposes only strategies the
+running backend actually supports, and posts the entered DID to `/resolve`.
+
+For a presenter-safe local launch of the API, dashboard, and three controlled
+resolvers, run `./scripts/start_demo.ps1`; stop only that tracked session with
+`./scripts/stop_demo.ps1`. See
+[`docs/HACKATHON_DEMO_RUNBOOK.md`](docs/HACKATHON_DEMO_RUNBOOK.md) for the live
+3–5 minute flow and recovery steps.
+
+`POST /resolve` retains all existing flat response fields and adds a
+self-contained dashboard contract:
+
+- `selection` — eligible and selected counts, selected provider ids, adaptive
+  estimate/target when available, and an honest `selection_mode`;
+- `result` — normalized `didResolutionMetadata`, `didDocument`, and
+  `didDocumentMetadata`;
+- `attempts` — selected, dispatched, acceptance, latency, outcome, and reason
+  for each eligible or skipped provider;
+- `cost` — actual dispatched calls and the calculated saving versus racing the
+  request's full eligible set;
+- `evidence.mode` — `real` or `controlled_demo`; local inventories can never
+  be configured as real; and
+- `audit` — the audit-recorder receipt.  The default is explicitly
+  `recorded: false`, `status: not_configured`.
+
+The audit boundary accepts only a hashed DID, selected provider identifiers,
+a policy/version hash, a result hash, and a timestamp.  No blockchain client
+is included and raw telemetry is not sent to an audit sink.
+
+PowerShell local run:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m uvicorn avdr.real_router.app:app --host 127.0.0.1 --port 8080
+```
+
+The default application hashes and validates
+`service_assets/frozen_estimator_v3.spec.json`, reconstructs the existing
+`RollingEmpiricalEstimator`, and exposes `adaptive-min-set` alongside the
+baselines. The typed specification is bound to the original frozen pickle's
+SHA-256 and exact estimator configuration hash, but serving never reads or
+unpickles the gitignored developer-local binary. A specification integrity or
+identity mismatch fails startup rather than silently changing Adaptive.
+Clients cannot submit estimates or artifact paths. For the controlled local
+resolver inventory, set
+`$env:AVDR_PROVIDER_INVENTORY = "config/providers.local.yaml"` before starting
+the same command. `strategy: "adaptive"` is an additive request alias for the
+backend policy `adaptive-min-set`; the existing `policy` field remains valid.
+
 ### Baseline policies (all three are baselines — none is adaptive)
 
 | Policy | Execution | Min providers | Behaviour |
@@ -594,6 +650,8 @@ never performs I/O, execution never re-derives either:
 
 ```
 request context
+   -> RuntimeObservedHistory              process-local observed outcomes
+   -> Frozen RollingEmpiricalEstimator    typed service specification
    -> Estimator   q_hat(S | x)            src/avdr/adaptive/estimator.py
    -> Optimizer   S* = argmin C(S)        src/avdr/adaptive/optimizer.py
    -> Executor    first acceptable        src/avdr/real_router/executor.py
@@ -645,13 +703,64 @@ curl -X POST localhost:8080/resolve -H 'content-type: application/json'      -d 
 
 Clients supply **only the target**. The estimator and its `q_hat` table are
 server-side configuration — a client can never submit its own probability
-table. Without a configured estimator the policy is simply unavailable, and
-the three baselines are untouched.
+table. Without a verified frozen artifact or an explicitly configured
+estimator the policy is simply unavailable, and the three baselines are
+untouched. Deterministic table estimators remain available only for controlled
+optimizer/service tests; the default runtime uses the existing frozen rolling
+empirical estimator rather than a table or a new algorithm.
 
-**The estimator in this milestone is a deterministic table supplied as
-[CONTROLLED TEST INPUT].** No model is trained. Qualification proves the
-decision layer selects and executes correctly *given* estimates; it is **not**
-evidence that the estimates are correct.
+**Availability, readiness, and cold start.** `/health` and `/policies` report
+`adaptive_available` separately from `adaptive_ready`, including readiness by
+DID method and the packaged estimator's class, version, configuration hash,
+source-pickle SHA-256, and specification SHA-256. Availability means the
+estimator, optimizer, and policy are installed. Readiness is calculated by
+running the existing optimizer against the active observed-history snapshot;
+it is never inferred from a hard-coded request count. The dashboard uses this
+backend state to show Adaptive as ready or warming up.
+
+The adapter takes a coherent immutable
+snapshot before planning and commits observations after provider I/O. A short
+lock protects snapshot/commit only; no network request runs under the lock.
+History is in process memory, is not durable, and starts empty on every app
+process start. It is updated from backend attempts linked to the logical
+`request_id`: only dispatched, completed outcomes are observed. An observed
+success may establish the existing three-valued outcome for a superset that
+contains it; unselected-provider outcomes otherwise remain unknown and are
+never reconstructed.
+
+Real and controlled-demo observations use separate in-memory namespaces.
+Controlled traffic may warm the controlled dashboard state, but it cannot
+update the real deployment history. Each runtime history record carries its
+`evidence_mode` so the boundary is auditable.
+
+The historical three-trial all-provider warmup is encoded in the controlled
+V3/V4 evaluator, not in the serving `RealAdaptiveMinSet` policy, so the server
+does not borrow it as a production fallback. With insufficient history the
+frozen prior may leave the target unsatisfied; the API then returns the
+existing typed `SLO_ESTIMATE_UNSATISFIABLE` result and makes no provider call.
+Observed baseline requests also update runtime history, allowing ordinary
+local traffic to seed Adaptive without hidden probes or an implicit all-race.
+
+### Controlled dashboard scenarios
+
+The dashboard keeps the primary `/resolve` UI and adds a visually separate
+**CONTROLLED DEMO** panel backed by three additive endpoints:
+
+- `GET /demo/scenarios` lists exactly Normal, Slow / Failure, and Fast but
+  unacceptable;
+- `POST /demo/run` resets the controlled namespace, performs a deterministic
+  demo bootstrap until the existing optimizer reports ready, and executes the
+  final request through the existing adaptive policy and executor; and
+- `POST /demo/reset` clears only controlled history and restores the local
+  resolver controls.
+
+The default service uses `config/providers.local.yaml` only for these demo
+endpoints. Provider delay, failure, and invalid-document behavior is applied
+through the existing resolver-side `/admin/behavior` interface. The scenario
+layer does not write estimator probabilities or special-case policy and
+acceptance decisions. Every response is labeled `controlled_demo`, audit
+recording is disabled, and each run starts fresh so scenario history cannot
+leak into the next run or into real adaptive readiness.
 
 ### Prospective subset-probability estimator
 

@@ -217,7 +217,7 @@ class RealRoutingExecutor:
             )
             raw_bodies[provider.id] = outcome.raw_body
             if outcome.accepted:
-                payload = outcome.raw_body
+                payload = _normalized_resolution_payload(outcome)
                 # No provider is contacted after a success.
                 break
         return attempts, payload, raw_bodies
@@ -280,7 +280,7 @@ class RealRoutingExecutor:
                 # A faster response that fails acceptance does NOT win; the
                 # race simply continues without it.
                 if outcome.accepted and payload is None:
-                    payload = outcome.raw_body
+                    payload = _normalized_resolution_payload(outcome)
                     winner_found = True
 
             if winner_found:
@@ -337,6 +337,21 @@ class RealRoutingExecutor:
 
         attempts.sort(key=lambda a: a.launch_position)
         return attempts, payload, raw_bodies
+
+
+def _normalized_resolution_payload(outcome: ProbeOutcome) -> dict:
+    """Return the W3C-oriented fields already produced by the adapter.
+
+    Providers may return either a full DID Resolution Result or a bare DID
+    document.  The adapter has already normalized both shapes, so rebuilding
+    this payload from raw provider JSON would lose valid bare documents.
+    """
+    normalized = outcome.normalized
+    return {
+        "didResolutionMetadata": normalized.resolution_metadata,
+        "didDocument": normalized.normalized_did_document,
+        "didDocumentMetadata": normalized.did_document_metadata,
+    }
 
 
 def _failed_attempt(

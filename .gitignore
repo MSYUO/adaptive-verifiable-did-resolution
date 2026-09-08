@@ -22,3 +22,7 @@ artifacts/*
 # Frozen model binaries are regenerated; their METADATA (json, with the
 # artifact hash) is tracked so the frozen identity is committed.
 frozen/*.pkl
+
+# Presenter launcher session state. Contains only exact PIDs/ports and is
+# removed by scripts/stop_demo.ps1 after a verified clean shutdown.
+.avdr-demo/

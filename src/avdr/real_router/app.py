@@ -14,16 +14,24 @@ probability table.
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..acceptance import parse_did_method
 from ..adapters import ADAPTERS
+from ..audit import (
+    AuditReceipt,
+    AuditRecorder,
+    NullAuditRecorder,
+    build_commitment,
+)
 from ..budget import BudgetRegistry
 from ..candidates import (
     INSUFFICIENT_QUALIFIED_PROVIDERS,
@@ -38,19 +46,43 @@ from ..profiles import CHECK_ORDER, PROFILE_W3C_BASIC_V1
 from ..provenance import build_provenance, new_experiment_id
 from ..telemetry import TelemetrySink
 from .adaptive_policy import AdaptivePlanningError, RealAdaptiveMinSet
+from .demo import ControlledDemoError, ControlledDemoOrchestrator
 from .executor import RealRoutingExecutor
 from .policies import POLICY_TYPES, build_policies
+from .runtime_adaptive import (
+    FrozenAdaptiveRuntime,
+    try_load_frozen_adaptive_runtime,
+)
+from .service_contract import build_service_fields
 
 PHASE = "real-routing-service"
+WEB_ROOT = REPO_ROOT / "web"
+EVIDENCE_MODES = frozenset({"real", "controlled_demo"})
+STRATEGY_ALIASES = {
+    "adaptive": RealAdaptiveMinSet.name,
+    "adaptive-min-set": RealAdaptiveMinSet.name,
+    "all-race": "all-race",
+    "sequential": "sequential-failover",
+    "sequential-failover": "sequential-failover",
+    "single": "single-static",
+    "single-static": "single-static",
+}
 
 
 class ResolveRequest(BaseModel):
     did: str = Field(min_length=1)
     policy: str | None = None
+    # Product-facing alias. Existing clients may continue to send `policy`.
+    strategy: str | None = None
     # Only the TARGET is client-supplied. The estimator and its q_hat table
     # are server-side configuration: a client must never be able to submit
     # its own probability table to a production-facing API.
     target_slo_probability: float | None = None
+
+
+class DemoRunRequest(BaseModel):
+    scenario_id: str
+    did: str = Field(default="did:example:controlled-demo", min_length=1)
 
 
 def create_app(
@@ -63,20 +95,36 @@ def create_app(
     budgets: BudgetRegistry | None = None,
     experiment_id: str | None = None,
     estimator: SubsetEstimator | None = None,
+    adaptive_runtime: FrozenAdaptiveRuntime | None = None,
     default_target_slo: float = 0.99,
     cost_model: CostModel | None = None,
     allow_best_effort: bool = False,
+    evidence_mode: str | None = None,
+    audit_recorder: AuditRecorder | None = None,
+    demo_inventory: ProviderInventory | None = None,
 ) -> FastAPI:
+    if estimator is not None and adaptive_runtime is not None:
+        raise ValueError("configure estimator or adaptive_runtime, not both")
     inventory = inventory or load_provider_inventory()
     sink = sink or TelemetrySink(telemetry_dir or (REPO_ROOT / "telemetry" / "routing"))
     budgets = budgets if budgets is not None else BudgetRegistry(inventory)
+    evidence_mode = _resolve_evidence_mode(inventory, evidence_mode)
+    audit_recorder = audit_recorder or NullAuditRecorder()
     policies = build_policies(single_static_target, launch_order_seed)
+    configured_estimator = (
+        adaptive_runtime.estimator if adaptive_runtime is not None else estimator
+    )
+    adaptive_default_target = (
+        adaptive_runtime.target_slo_probability
+        if adaptive_runtime is not None
+        else default_target_slo
+    )
     # The adaptive policy is ADDED alongside the baselines, never replacing
     # them. Without a server-configured estimator it is simply unavailable.
-    if estimator is not None:
+    if configured_estimator is not None:
         policies[RealAdaptiveMinSet.name] = RealAdaptiveMinSet(
-            estimator=estimator,
-            default_target=default_target_slo,
+            estimator=configured_estimator,
+            default_target=adaptive_default_target,
             cost_model=cost_model,
             allow_best_effort=allow_best_effort,
         )
@@ -85,6 +133,17 @@ def create_app(
         timeout_ms=timeout_ms,
         budgets=budgets,
     )
+    demo_orchestrator = (
+        ControlledDemoOrchestrator(
+            inventory=demo_inventory,
+            runtime=adaptive_runtime,
+            timeout_ms=min(timeout_ms, 2000),
+        )
+        if demo_inventory is not None and adaptive_runtime is not None
+        else None
+    )
+    if demo_inventory is not None and adaptive_runtime is None:
+        raise ValueError("controlled demo requires the frozen adaptive runtime")
     experiment_id = experiment_id or new_experiment_id("routing")
 
     provenance_base = build_provenance(
@@ -111,17 +170,40 @@ def create_app(
     app.state.policies = policies
     app.state.executor = executor
     app.state.provenance = provenance_base
+    app.state.evidence_mode = evidence_mode
+    app.state.audit_recorder = audit_recorder
+    app.state.adaptive_runtime = adaptive_runtime
+    app.state.demo_orchestrator = demo_orchestrator
+
+    if WEB_ROOT.is_dir():
+        app.mount(
+            "/dashboard",
+            StaticFiles(directory=WEB_ROOT, html=True),
+            name="dashboard",
+        )
+
+        @app.get("/", include_in_schema=False)
+        async def dashboard_redirect():
+            return RedirectResponse(url="/dashboard/")
 
     @app.get("/health")
     async def health() -> dict:
         return {
             "status": "ok",
+            "evidence_mode": evidence_mode,
             "acceptance_profile": PROFILE_W3C_BASIC_V1,
             "policies": sorted(policies),
             "provider_inventory_version": inventory.inventory_version,
             "provider_inventory_hash": inventory.inventory_hash(),
             "experiment_id": experiment_id,
             "attempt_timeout_ms": timeout_ms,
+            "adaptive_runtime": _adaptive_service_status(
+                runtime=adaptive_runtime,
+                policies=policies,
+                inventory=inventory,
+                budgets=budgets,
+                evidence_mode=evidence_mode,
+            ),
         }
 
     @app.get("/providers")
@@ -161,6 +243,7 @@ def create_app(
                 }
             )
         return {
+            "evidence_mode": evidence_mode,
             "provider_inventory_version": inventory.inventory_version,
             "provider_inventory_hash": inventory.inventory_hash(),
             "providers": rows,
@@ -178,7 +261,9 @@ def create_app(
             "adaptive": (
                 {
                     **policies[RealAdaptiveMinSet.name].estimator.describe(),
-                    "default_target_slo_probability": default_target_slo,
+                    "default_target_slo_probability": policies[
+                        RealAdaptiveMinSet.name
+                    ].default_target,
                     "optimizer_version": policies[
                         RealAdaptiveMinSet.name
                     ].optimizer.version,
@@ -189,13 +274,23 @@ def create_app(
                     "max_adaptive_candidates": policies[
                         RealAdaptiveMinSet.name
                     ].optimizer.max_candidates,
+                    "runtime": (
+                        _adaptive_service_status(
+                            runtime=adaptive_runtime,
+                            policies=policies,
+                            inventory=inventory,
+                            budgets=budgets,
+                            evidence_mode=evidence_mode,
+                        )
+                    ),
                 }
                 if RealAdaptiveMinSet.name in policies
                 else None
             ),
             "note": (
-                "All three are baselines. None performs prediction, adaptive "
-                "fan-out sizing or provider ranking."
+                "single-static, sequential-failover, and all-race are "
+                "baselines; adaptive-min-set is exposed only when a "
+                "server-side estimator is configured."
             ),
         }
 
@@ -210,10 +305,77 @@ def create_app(
     async def recent(limit: int = Query(default=20, ge=1, le=200)):
         return {"records": sink.recent_routing_requests(limit)}
 
+    @app.get("/demo/scenarios")
+    async def demo_scenarios() -> dict:
+        if demo_orchestrator is None:
+            return {
+                "available": False,
+                "label": "CONTROLLED DEMO",
+                "evidence_mode": "controlled_demo",
+                "reset_mode": "fresh_scenario_state",
+                "scenarios": [],
+                "reason": "controlled_demo_inventory_not_configured",
+            }
+        return demo_orchestrator.inventory_payload()
+
+    @app.post("/demo/reset")
+    async def demo_reset():
+        if demo_orchestrator is None:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "controlledDemoUnavailable"},
+            )
+        try:
+            return await demo_orchestrator.reset(app.state.client)
+        except httpx.HTTPError as exc:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "controlledProviderUnavailable",
+                    "detail": str(exc),
+                },
+            )
+
+    @app.post("/demo/run")
+    async def demo_run(payload: DemoRunRequest):
+        if demo_orchestrator is None:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "controlledDemoUnavailable"},
+            )
+        known = [
+            row["id"]
+            for row in demo_orchestrator.inventory_payload()["scenarios"]
+        ]
+        if payload.scenario_id not in known:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "unknownDemoScenario",
+                    "available": known,
+                },
+            )
+        try:
+            return await demo_orchestrator.run(
+                app.state.client,
+                payload.scenario_id,
+                payload.did,
+            )
+        except (ControlledDemoError, httpx.HTTPError) as exc:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "controlledDemoExecutionFailed",
+                    "detail": str(exc),
+                },
+            )
+
     @app.post("/resolve")
     async def resolve(payload: ResolveRequest):
         did = payload.did
-        policy_name = payload.policy or "sequential-failover"
+        policy_name, policy_error = _resolve_requested_policy(payload)
+        if policy_error is not None:
+            return JSONResponse(status_code=422, content=policy_error)
 
         if policy_name not in policies:
             return JSONResponse(
@@ -236,6 +398,11 @@ def create_app(
             inventory, did_method, budgets=budgets, known_adapters=set(ADAPTERS)
         )
         policy = policies[policy_name]
+        runtime_snapshot = (
+            adaptive_runtime.snapshot(evidence_mode)
+            if adaptive_runtime is not None
+            else None
+        )
 
         # Capability gate: a policy that needs redundancy must not silently
         # pretend to have it.
@@ -275,8 +442,24 @@ def create_app(
                         },
                     )
                 plan = policy.plan(
-                    candidate_set.candidates, did, target_probability=target
+                    candidate_set.candidates,
+                    did,
+                    target_probability=target,
+                    context=(
+                        runtime_snapshot.estimator_context()
+                        if runtime_snapshot is not None
+                        else None
+                    ),
                 )
+                if runtime_snapshot is not None:
+                    plan.metadata.update(
+                        {
+                            "runtime_history_version": runtime_snapshot.version,
+                            "runtime_history_request_count": (
+                                runtime_snapshot.observed_request_count
+                            ),
+                        }
+                    )
             else:
                 plan = policy.plan(candidate_set.candidates, did)
         except AdaptivePlanningError as exc:
@@ -292,6 +475,11 @@ def create_app(
                     "routing_policy": policy_name,
                     **exc.result.summary(),
                     "skipped_providers": candidate_set.skipped_dicts(),
+                    "runtime_history": (
+                        adaptive_runtime.history_for(evidence_mode).describe()
+                        if adaptive_runtime is not None
+                        else None
+                    ),
                 },
             )
         except EstimatorError as exc:
@@ -322,9 +510,44 @@ def create_app(
             sink.record_routing_attempt(attempt)
         sink.record_routing_request(result.record)
 
+        # Commit backend execution observations only after provider I/O has
+        # finished. Every service policy contributes what it actually saw, so
+        # baseline traffic can honestly seed the frozen runtime estimator.
+        runtime_record = (
+            adaptive_runtime.observe(
+                request_id=result.record.request_id,
+                plan=plan,
+                candidate_set=candidate_set,
+                attempts=result.attempts,
+                decision_history_version=(
+                    runtime_snapshot.version if runtime_snapshot is not None else None
+                ),
+                evidence_mode=evidence_mode,
+            )
+            if adaptive_runtime is not None
+            else None
+        )
+
         warnings = _build_warnings(result, candidate_set, policy_name)
         winner = next((a for a in result.attempts if a.accepted), None)
         body = result.winning_payload if isinstance(result.winning_payload, dict) else {}
+
+        commitment = build_commitment(
+            request_id=result.record.request_id,
+            did=did,
+            selected_providers=list(plan.attempt_order()),
+            policy=plan.policy,
+            policy_metadata=plan.metadata,
+            result_hash=winner.normalized_document_hash if winner else None,
+            timestamp=result.record.timestamp,
+        )
+        try:
+            audit_receipt = await audit_recorder.record(commitment)
+        except Exception:  # audit integration must not suppress a DID result
+            audit_receipt = AuditReceipt(
+                recorded=False,
+                status="recording_failed",
+            )
 
         response = {
             "request_id": result.record.request_id,
@@ -353,18 +576,46 @@ def create_app(
             "warnings": warnings,
         }
 
+        # Add the product-facing DTO while retaining every legacy field above.
+        response.update(
+            build_service_fields(
+                did=did,
+                plan=plan,
+                candidate_set=candidate_set,
+                result=result,
+                acceptance_profile=PROFILE_W3C_BASIC_V1,
+                evidence_mode=evidence_mode,
+                audit=audit_receipt.to_dict(),
+            )
+        )
+
+        if runtime_record is not None:
+            response["runtime_history"] = {
+                "storage": "process_memory",
+                "durable": False,
+                "evidence_mode": runtime_record.evidence_mode,
+                "decision_history_version": runtime_record.decision_history_version,
+                "committed_history_version": runtime_record.committed_history_version,
+                "observed_providers": list(runtime_record.observed_providers),
+                "known_subset_updates": len(runtime_record.subset_updates),
+            }
+
         if plan.policy == RealAdaptiveMinSet.name:
             response["adaptive_plan"] = {
                 key: plan.metadata.get(key)
                 for key in (
                     "status", "target_slo_probability", "candidate_providers",
                     "candidate_count", "evaluated_subset_count",
-                    "unestimated_subset_count", "selected_subset",
+                    "unestimated_subset_count", "coverage_mode",
+                    "expected_subset_count", "estimated_subset_count",
+                    "missing_subsets", "exact", "selected_subset",
                     "selected_subset_size", "estimated_subset_success",
                     "selection_cost", "selection_reason", "best_subset",
                     "best_probability", "best_effort", "optimizer_version",
                     "cost_model_id", "tie_break_rule", "estimator_id",
                     "estimator_version", "estimator_config_hash",
+                    "runtime_history_version",
+                    "runtime_history_request_count",
                 )
             }
 
@@ -387,6 +638,125 @@ def create_app(
         return response
 
     return app
+
+
+def _resolve_requested_policy(
+    payload: ResolveRequest,
+) -> tuple[str, dict | None]:
+    policy = (
+        STRATEGY_ALIASES.get(payload.policy, payload.policy)
+        if payload.policy
+        else None
+    )
+    strategy = (
+        STRATEGY_ALIASES.get(payload.strategy, payload.strategy)
+        if payload.strategy
+        else None
+    )
+    if policy is not None and strategy is not None and policy != strategy:
+        return policy, {
+            "error": "conflictingPolicyAndStrategy",
+            "detail": (
+                f"policy {payload.policy!r} and strategy {payload.strategy!r} "
+                "select different routing policies"
+            ),
+        }
+    return policy or strategy or "sequential-failover", None
+
+
+def _adaptive_service_status(
+    *,
+    runtime: FrozenAdaptiveRuntime | None,
+    policies: dict,
+    inventory: ProviderInventory,
+    budgets: BudgetRegistry,
+    evidence_mode: str,
+) -> dict:
+    """Report installed capability separately from live planning readiness."""
+    policy = policies.get(RealAdaptiveMinSet.name)
+    if runtime is None or not isinstance(policy, RealAdaptiveMinSet):
+        return {
+            "available": False,
+            "adaptive_available": False,
+            "adaptive_ready": False,
+            "reason": "adaptive_dependencies_unavailable",
+            "readiness_scope": "by_did_method",
+            "ready_did_methods": [],
+            "by_did_method": {},
+        }
+
+    methods = sorted(
+        {
+            method
+            for provider in inventory.providers
+            for method in provider.supported_did_methods
+        }
+    )
+    by_method = {}
+    for method in methods:
+        candidates = select_candidates(
+            inventory,
+            method,
+            budgets=budgets,
+            known_adapters=set(ADAPTERS),
+        )
+        by_method[method] = runtime.assess_readiness(
+            candidate_providers=candidates.candidate_ids,
+            optimizer=policy.optimizer,
+            evidence_mode=evidence_mode,
+            target_slo_probability=policy.default_target,
+            allow_best_effort=policy.allow_best_effort,
+        )
+
+    ready_methods = sorted(
+        method
+        for method, status in by_method.items()
+        if status["adaptive_ready"]
+    )
+    if ready_methods:
+        reason = (
+            "ready"
+            if len(ready_methods) == len(by_method)
+            else "ready_for_some_did_methods"
+        )
+    elif by_method and all(
+        status["reason"] == "insufficient_observed_history"
+        for status in by_method.values()
+    ):
+        reason = "insufficient_observed_history"
+    elif not by_method:
+        reason = "no_configured_did_methods"
+    else:
+        reason = "no_ready_did_method"
+
+    return {
+        **runtime.describe(evidence_mode),
+        "adaptive_ready": bool(ready_methods),
+        "reason": reason,
+        "readiness_scope": "by_did_method",
+        "ready_did_methods": ready_methods,
+        "by_did_method": by_method,
+    }
+
+
+def _resolve_evidence_mode(
+    inventory: ProviderInventory, configured: str | None
+) -> str:
+    inferred = (
+        "controlled_demo"
+        if inventory.inventory_version.lower().startswith("local-")
+        else "real"
+    )
+    if configured is None:
+        return inferred
+    if configured not in EVIDENCE_MODES:
+        raise ValueError(
+            f"evidence_mode must be one of {sorted(EVIDENCE_MODES)}, "
+            f"got {configured!r}"
+        )
+    if inferred == "controlled_demo" and configured == "real":
+        raise ValueError("a local controlled inventory cannot be labeled real")
+    return configured
 
 
 def _build_warnings(result, candidate_set, policy_name: str) -> list[dict]:
@@ -452,4 +822,19 @@ def _build_warnings(result, candidate_set, policy_name: str) -> list[dict]:
     return warnings
 
 
-app = create_app()
+def create_default_app() -> FastAPI:
+    """Create the normal MVP app, enabling the verified frozen runtime."""
+    inventory_path = os.environ.get("AVDR_PROVIDER_INVENTORY")
+    adaptive_runtime = try_load_frozen_adaptive_runtime()
+    return create_app(
+        inventory=load_provider_inventory(inventory_path),
+        adaptive_runtime=adaptive_runtime,
+        demo_inventory=(
+            load_provider_inventory(REPO_ROOT / "config" / "providers.local.yaml")
+            if adaptive_runtime is not None
+            else None
+        ),
+    )
+
+
+app = create_default_app()

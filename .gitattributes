@@ -1,0 +1,2 @@
+# The serving specification is hashed byte-for-byte at startup.
+service_assets/*.json text eol=lf

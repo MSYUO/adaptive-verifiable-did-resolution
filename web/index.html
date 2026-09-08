@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Inspect one Adaptive Verifiable DID Resolution request from selection through acceptance."
+    />
+    <title>AVDR Resolution Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-glow" aria-hidden="true"></div>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="/dashboard/" aria-label="AVDR resolution console">
+          <span class="brand-mark">A</span>
+          <span>
+            <strong>AVDR</strong>
+            <small>Resolution console</small>
+          </span>
+        </a>
+        <div class="runtime-status" aria-live="polite">
+          <span id="healthDot" class="status-dot status-dot--loading"></span>
+          <span id="healthText">Connecting to router</span>
+          <span id="modeBadge" class="mode-badge mode-badge--unknown">MODE N/A</span>
+        </div>
+      </header>
+
+      <section class="intro" aria-labelledby="pageTitle">
+        <div>
+          <p class="eyebrow">Adaptive Verifiable DID Resolution</p>
+          <h1 id="pageTitle">Resolve once. See every routing decision.</h1>
+        </div>
+        <p class="intro-copy">
+          AVDR chooses a useful resolver set, executes the selected paths, and
+          returns the first response that passes structural acceptance.
+        </p>
+      </section>
+
+      <section class="resolve-card" aria-labelledby="resolveTitle">
+        <div class="section-heading">
+          <div>
+            <span class="step-number">01</span>
+            <h2 id="resolveTitle">Resolution request</h2>
+          </div>
+          <div class="section-meta">
+            <span id="primaryModeLabel" class="surface-label">MODE N/A</span>
+            <span id="providerSummary" class="quiet-label">Loading providers…</span>
+          </div>
+        </div>
+
+        <form id="resolveForm">
+          <label class="field-label" for="didInput">Decentralized identifier</label>
+          <div class="did-row">
+            <input
+              id="didInput"
+              name="did"
+              type="text"
+              inputmode="url"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="did:key:z6Mk…"
+              required
+              aria-describedby="requestMessage"
+            />
+            <button id="resolveButton" class="resolve-button" type="submit">
+              <span>Resolve DID</span>
+              <span aria-hidden="true">↗</span>
+            </button>
+          </div>
+
+          <div class="strategy-row">
+            <fieldset>
+              <legend>Strategy</legend>
+              <div id="strategyOptions" class="strategy-options" aria-live="polite">
+                <span class="loading-line">Loading available policies…</span>
+              </div>
+            </fieldset>
+            <label id="targetField" class="target-field" for="targetInput" hidden>
+              <span>Target success</span>
+              <span class="target-input-wrap">
+                <input
+                  id="targetInput"
+                  name="target"
+                  type="number"
+                  min="0.001"
+                  max="1"
+                  step="0.001"
+                  value="0.95"
+                />
+                <span>probability</span>
+              </span>
+            </label>
+          </div>
+          <p id="requestMessage" class="request-message" role="status"></p>
+        </form>
+      </section>
+
+      <section id="demoCard" class="demo-card" aria-labelledby="demoTitle">
+        <div class="section-heading">
+          <div>
+            <span class="step-number">D</span>
+            <h2 id="demoTitle">Demo Scenarios</h2>
+          </div>
+          <span class="surface-label surface-label--controlled">CONTROLLED DEMO</span>
+        </div>
+        <p class="demo-boundary">
+          Synthetic loopback providers and fresh isolated history. These runs
+          are demonstrations, not real resolver measurements or research evidence.
+        </p>
+        <div id="demoOptions" class="demo-options" aria-live="polite">
+          <span class="loading-line">Loading controlled scenarios…</span>
+        </div>
+        <div id="demoExplanation" class="demo-explanation" hidden>
+          <strong id="demoExplanationTitle"></strong>
+          <p id="demoExplanationText"></p>
+        </div>
+        <p id="demoMessage" class="request-message" role="status"></p>
+      </section>
+
+      <section id="emptyState" class="empty-state">
+        <span class="empty-icon" aria-hidden="true">⌁</span>
+        <div>
+          <strong>Ready for a resolution request</strong>
+          <p>The request trace will appear here without mixing in research-run metrics.</p>
+        </div>
+      </section>
+
+      <section id="resultPanel" class="result-panel" aria-labelledby="resultTitle" hidden>
+        <div class="result-heading">
+          <div>
+            <span class="step-number">02</span>
+            <h2 id="resultTitle">Resolution result</h2>
+          </div>
+          <div class="result-identifiers">
+            <span id="resultStatus" class="result-status"></span>
+            <code id="requestId"></code>
+          </div>
+        </div>
+
+        <div id="evidenceNotice" class="evidence-notice"></div>
+
+        <div class="result-summary">
+          <div class="summary-primary">
+            <span class="field-label">DID</span>
+            <code id="resultDid" class="resolved-did"></code>
+          </div>
+          <div class="summary-primary">
+            <span class="field-label">Structural acceptance</span>
+            <div id="acceptanceValue" class="acceptance-value"></div>
+          </div>
+        </div>
+
+        <div id="metricsGrid" class="metrics-grid"></div>
+
+        <section class="detail-section" aria-labelledby="selectionTitle">
+          <div class="detail-title-row">
+            <div>
+              <span class="step-number">03</span>
+              <h3 id="selectionTitle">Resolver selection</h3>
+            </div>
+            <span id="selectionMode" class="quiet-label"></span>
+          </div>
+          <div id="selectedProviders" class="provider-chips"></div>
+        </section>
+
+        <section class="detail-section" aria-labelledby="traceTitle">
+          <div class="detail-title-row">
+            <div>
+              <span class="step-number">04</span>
+              <h3 id="traceTitle">Resolver trace</h3>
+            </div>
+            <span class="quiet-label">One row per configured candidate</span>
+          </div>
+          <div class="trace-head" aria-hidden="true">
+            <span>Resolver</span><span>Outcome</span><span>Latency</span>
+          </div>
+          <div id="attemptTrace" class="attempt-trace"></div>
+        </section>
+
+        <details class="document-details">
+          <summary>Normalized DID Resolution Result</summary>
+          <pre id="resultJson"></pre>
+        </details>
+      </section>
+    </main>
+    <script src="./app.js" defer></script>
+  </body>
+</html>
