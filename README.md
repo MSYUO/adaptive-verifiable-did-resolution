@@ -86,6 +86,9 @@ Concretely:
 | `src/avdr/real_router/app.py` | **Real routing service API** |
 | `config/providers.local.yaml` | Local controlled provider inventory |
 | `scripts/real_did_qualification.py` | Real DID resolver compatibility qualification |
+| `scripts/qualify_real_dids.py` | P9 bounded opt-in real-DID compatibility + receipt verification |
+| `scripts/browser_real_compatibility_qa.mjs` | P9 real dashboard screenshot/receipt QA |
+| `docs/REAL_DID_COMPATIBILITY.md` | Measured presenter evidence and compatibility-only claim boundary |
 | `scripts/real_routing_demo.py` | Controlled local routing demo (no public calls) |
 | `src/avdr/adaptive/estimator.py` | Layer A — subset estimates `q_hat(S\|x)` |
 | `src/avdr/adaptive/optimizer.py` | Layer B — minimum-set optimizer + cost models |
@@ -576,6 +579,17 @@ anchor interface. See
 [`docs/AUDIT_PROVENANCE.md`](docs/AUDIT_PROVENANCE.md) for the serialization,
 privacy, verification, and trust-scope contract.
 
+The bounded P9 real-DID check is opt-in and sends one request each for the
+configured public `did:key`, `did:web`, and `did:ethr` fixtures, with no
+retries. It verifies the returned local audit receipts but makes no performance
+or generalization claim. See
+[`docs/REAL_DID_COMPATIBILITY.md`](docs/REAL_DID_COMPATIBILITY.md) for the
+measured compatibility evidence and presenter screenshots.
+
+```bash
+python scripts/qualify_real_dids.py --execute-live --out <temporary-report.json>
+```
+
 PowerShell local run:
 
 ```powershell
@@ -847,6 +861,9 @@ python scripts/measurement_qualification.py
 
 # Real DID resolver compatibility qualification (hits real public endpoints)
 python scripts/real_did_qualification.py --pacing 5.0
+
+# Bounded P9 compatibility + receipt qualification (exactly three public requests)
+python scripts/qualify_real_dids.py --execute-live --out <temporary-report.json>
 ```
 
 **The test suite makes zero public-network calls, and this is enforced rather
