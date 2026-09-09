@@ -86,6 +86,36 @@ def _provider_response(request: httpx.Request) -> httpx.Response:
     )
 
 
+def live_anchor_status(
+    *,
+    response_status_code: int,
+    body: dict[str, Any],
+    local_verification_status_code: int,
+    local_verification: dict[str, Any],
+) -> str:
+    """Classify the live result from the service and verified anchor DTOs."""
+    anchor_result = body.get("audit", {}).get("anchor", {})
+    passed = bool(
+        response_status_code == 200
+        and body.get("accepted") is True
+        and body.get("evidence", {}).get("mode") == "controlled_demo"
+        and local_verification_status_code == 200
+        and local_verification.get("valid") is True
+        and local_verification.get("did_commitment_valid") is True
+        and local_verification.get("result_commitment_valid") is True
+        and anchor_result.get("status") == "mined"
+        and anchor_result.get("network") == "ethereum-sepolia"
+        and anchor_result.get("chain_id") == 11155111
+        and anchor_result.get("value_wei") == 0
+        and bool(anchor_result.get("transaction_hash"))
+        and anchor_result.get("transaction_receipt_status") == 1
+        and anchor_result.get("onchain_receipt_match") is True
+        and anchor_result.get("verification") == "onchain_readback"
+        and anchor_result.get("error_code") is None
+    )
+    return "PASS" if passed else "FAIL"
+
+
 async def execute() -> dict[str, Any]:
     try:
         anchor = _configured_anchor()
@@ -127,25 +157,15 @@ async def execute() -> dict[str, Any]:
     audit = body.get("audit", {})
     anchor_result = audit.get("anchor", {})
     local = local_verification.json()
-    passed = bool(
-        response.status_code == 200
-        and body.get("success") is True
-        and body.get("evidence", {}).get("mode") == "controlled_demo"
-        and local_verification.status_code == 200
-        and local.get("valid") is True
-        and local.get("did_commitment_valid") is True
-        and local.get("result_commitment_valid") is True
-        and anchor_result.get("status") == "mined"
-        and anchor_result.get("network") == "ethereum-sepolia"
-        and anchor_result.get("chain_id") == 11155111
-        and anchor_result.get("value_wei") == 0
-        and anchor_result.get("onchain_receipt_match") is True
-        and anchor_result.get("verification") == "onchain_readback"
-    )
     return {
         "scope": "one controlled service receipt anchored to Ethereum Sepolia",
         "live_anchor_attempted": bool(anchor_result.get("transaction_hash")),
-        "live_anchor_status": "PASS" if passed else "FAIL",
+        "live_anchor_status": live_anchor_status(
+            response_status_code=response.status_code,
+            body=body,
+            local_verification_status_code=local_verification.status_code,
+            local_verification=local,
+        ),
         "block_reason": None,
         "evidence_mode": body.get("evidence", {}).get("mode"),
         "local_receipt_verification": local.get("valid"),

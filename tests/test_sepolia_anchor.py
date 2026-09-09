@@ -33,6 +33,7 @@ from avdr.sepolia_anchor import (
     decode_anchor_payload,
 )
 from avdr.telemetry import TelemetrySink
+from scripts.anchor_sepolia_receipt import live_anchor_status
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RECEIPT_HASH = "sha256:" + "a" * 64
@@ -462,6 +463,75 @@ def test_dashboard_separates_local_integrity_from_public_anchor():
     assert "Ethereum Sepolia" in javascript
     assert "onchain_receipt_match === true" in javascript
     assert "https://sepolia.etherscan.io/tx/" in javascript
+
+
+@pytest.mark.asyncio
+async def test_live_status_passes_for_successful_mocked_readback_and_rejects_failures():
+    anchor_result = (
+        await anchor(FakeRpc()).anchor(RECEIPT_HASH, dict(METADATA))
+    ).to_dict()
+    body = {
+        "accepted": True,
+        "evidence": {"mode": "controlled_demo"},
+        "audit": {"anchor": anchor_result},
+    }
+    local = {
+        "valid": True,
+        "did_commitment_valid": True,
+        "result_commitment_valid": True,
+    }
+
+    assert live_anchor_status(
+        response_status_code=200,
+        body=body,
+        local_verification_status_code=200,
+        local_verification=local,
+    ) == "PASS"
+
+    mismatch = copy.deepcopy(body)
+    mismatch["audit"]["anchor"]["onchain_receipt_match"] = False
+    assert live_anchor_status(
+        response_status_code=200,
+        body=mismatch,
+        local_verification_status_code=200,
+        local_verification=local,
+    ) == "FAIL"
+
+    failed_receipt = copy.deepcopy(body)
+    failed_receipt["audit"]["anchor"]["transaction_receipt_status"] = 0
+    assert live_anchor_status(
+        response_status_code=200,
+        body=failed_receipt,
+        local_verification_status_code=200,
+        local_verification=local,
+    ) == "FAIL"
+
+    rejected = copy.deepcopy(body)
+    rejected["accepted"] = False
+    assert live_anchor_status(
+        response_status_code=200,
+        body=rejected,
+        local_verification_status_code=200,
+        local_verification=local,
+    ) == "FAIL"
+
+    readback_failed = copy.deepcopy(body)
+    readback_failed["audit"]["anchor"]["verification"] = None
+    assert live_anchor_status(
+        response_status_code=200,
+        body=readback_failed,
+        local_verification_status_code=200,
+        local_verification=local,
+    ) == "FAIL"
+
+    anchor_error = copy.deepcopy(body)
+    anchor_error["audit"]["anchor"]["error_code"] = "ANCHOR_READBACK_ERROR"
+    assert live_anchor_status(
+        response_status_code=200,
+        body=anchor_error,
+        local_verification_status_code=200,
+        local_verification=local,
+    ) == "FAIL"
 
 
 def test_live_script_is_explicit_and_blocks_without_a_wallet():
