@@ -1,123 +1,185 @@
-# AVDR Hackathon Demo Runbook
+# AVDR final hackathon presenter runbook
 
-This is a 3–5 minute presenter flow for the local MVP. All three scenarios are
-**CONTROLLED DEMO** runs against synthetic loopback providers. They are not
-measurements of public DID resolver reliability or performance.
+This is a 10-minute pitch followed by 5 minutes of judge Q&A for the frozen
+presenter baseline at commit
+`21796f9db1995a2ba37fc99b287e3ce5a382f418`, tagged
+`hackathon-sepolia-live-v1`.
 
-## 1. Before presentation
+Keep the evidence scopes separate throughout the presentation:
 
-- Open PowerShell in the repository root.
-- Confirm `.venv\Scripts\python.exe` exists and dependencies are installed.
-- Close any old AVDR presenter session with `./scripts/stop_demo.ps1`.
-- Default ports must be free: backend `8080`, resolver A `8001`, resolver B
-  `8002`, and resolver C `8003`. The launcher refuses occupied ports and never
-  kills a process merely because it owns one of them.
-- Keep this sentence ready: AVDR does not always call one fixed resolver and
-  does not always broadcast to every resolver. It uses observed behavior to
-  choose the smallest resolver set that can satisfy the configured target,
-  then returns the first structurally acceptable DID resolution result.
+- **PRODUCT** describes implemented behavior.
+- **CONTROLLED DEMO** uses synthetic loopback resolvers and isolated history.
+- **REAL** describes bounded interoperability observations only.
+- **AUDIT** verifies AVDR receipt integrity and provenance.
+- **SEPOLIA** verifies an external receipt commitment, not DID truth.
 
-## 2. Start service
+Never run `anchor_sepolia_receipt.py --execute-live` during this demo. The
+blockchain segment uses only the existing transaction documented in
+[`BLOCKCHAIN_LIVE_EVIDENCE.md`](BLOCKCHAIN_LIVE_EVIDENCE.md).
 
-```powershell
-.\scripts\start_demo.ps1
-```
+## Before the presentation
 
-Wait for `AVDR_DEMO_STATUS=READY`. The launcher starts three controlled
-resolvers, waits for their health endpoints, starts the API/dashboard, checks
-the dashboard and scenario inventory, and prints the URL.
+1. Open PowerShell in the repository root.
+2. Confirm `.venv\Scripts\python.exe` exists.
+3. Run `.\scripts\stop_demo.ps1` to clear an earlier AVDR-owned session.
+4. Start the local presenter stack with `.\scripts\start_demo.ps1`.
+5. Wait for `AVDR_DEMO_STATUS=READY`, then open the printed dashboard URL. On
+   the default port it is `http://127.0.0.1:8080/dashboard/`.
 
-If the default ports are intentionally unavailable, choose four unused ports:
+The default ports are backend `8080` and controlled resolvers `8001`–`8003`.
+The launcher refuses occupied ports; it does not kill an unknown listener.
+Use an all-distinct alternate set when needed:
 
 ```powershell
 .\scripts\start_demo.ps1 -BackendPort 18080 -ResolverAPort 18001 -ResolverBPort 18002 -ResolverCPort 18003
 ```
 
-## 3. Open dashboard
+Open the `DASHBOARD_URL` printed by that command; for the example it is
+`http://127.0.0.1:18080/dashboard/`.
 
-Open the printed URL, normally:
+## Presentation timing and live path
+
+Keep the live interaction to roughly 2–3 minutes inside the 10-minute pitch:
+
+1. **0:00–0:50 — Problem:** resolver paths vary in capability, availability,
+   latency, and output acceptability.
+2. **0:50–2:00 — Architecture:** qualification, adaptive minimum-set selection,
+   first-acceptable-result execution, and audit receipt.
+3. **2:00–4:30 — Live demo:** show **Normal**, then choose only one adverse
+   scenario—prefer **Fast but unacceptable**; use the frozen screenshot for the
+   other adverse scenario.
+4. **4:30–6:00 — Real compatibility:** show the three frozen real-DID evidence
+   screenshots without rerunning the public qualification.
+5. **6:00–7:15 — Audit:** verify the selected controlled receipt locally.
+6. **7:15–8:30 — Existing Sepolia anchor:** show the frozen transaction and
+   matching commitment; do not broadcast.
+7. **8:30–10:00 — Conclusion:** restate the scope boundaries and transition to
+   the 5-minute Q&A.
+
+The narrative order is problem, AVDR architecture, Normal, one adverse case,
+real DID compatibility, audit receipt, existing Sepolia anchor, and conclusion.
+
+## Step 1 — Product capability
+
+Show the dashboard and say:
+
+> AVDR adaptively selects resolver fan-out rather than always querying every
+> resolver. It returns the first result that passes the configured structural
+> acceptance profile.
+
+Point out the request, policy, evidence-mode, resolver-selection, trace, audit,
+and result panels. `w3c-basic-v1` is structural acceptance, not cryptographic
+verification or canonical DID truth.
+
+## Step 2 — Normal controlled scenario
+
+Click **Normal**. Show selected fan-out `k = 1`, one provider call, and two calls
+saved for that controlled request.
+
+Say: “Under this configured healthy scenario, the frozen policy demonstrates
+smaller fan-out.” Do not describe this as public-resolver performance.
+
+## Step 3 — Slow / Failure controlled scenario
+
+Click **Slow / Failure**. Show the larger selected set, failed first path,
+accepted alternate path, and calls used.
+
+Say: “With one intentionally degraded loopback resolver, isolated controlled
+history causes the policy to select additional redundancy.”
+
+## Step 4 — Fast but unacceptable
+
+Click **Fast but unacceptable**. Compare the faster unacceptable result with
+the later accepted result.
+
+> Fastest response is not necessarily an acceptable DID Resolution Result.
+
+AVDR accepts a winner only after the configured profile passes.
+
+## Step 5 — Real compatibility
+
+Open the frozen screenshots for `did:key`, `did:web`, and `did:ethr` from
+`docs/real_compatibility_screenshots/`. Point to the visible **REAL** label.
+
+Say:
+
+> These bounded observations establish interoperability for the tested paths
+> through one Universal Resolver deployment. They do not establish global
+> performance, provider independence, or production reliability.
+
+Do not rerun public DID qualification during the presentation merely to obtain
+new numbers.
+
+## Step 6 — Audit receipt
+
+Return to a controlled scenario and show:
+
+- receipt hash;
+- policy and resolver-selection provenance;
+- returned provider;
+- **Local integrity verified** after clicking **Verify receipt**.
+
+Say: “The verifier recomputes AVDR's receipt and disclosure commitments. The
+default recorder is process-memory-only, so this is not durable storage.”
+
+## Step 7 — Existing Sepolia anchor
+
+Open [`BLOCKCHAIN_LIVE_EVIDENCE.md`](BLOCKCHAIN_LIVE_EVIDENCE.md) and, if
+network access is available, the linked explorer page. Use only this existing
+transaction:
 
 ```text
-http://127.0.0.1:8080/dashboard/
+0xfd32a66a9227d5f724f2eb85b91457ed9e7e3437e30551edacc42c82e189b583
 ```
 
-Point out the mode labels before running anything. The primary area is the
-real service surface. The amber scenario area is explicitly `CONTROLLED DEMO`.
+Show Sepolia, block `11664768`, transaction value `0 wei`, and matching local
+and on-chain receipt hashes.
 
-## 4. Explain the real resolution area
+> The blockchain is an external commitment layer, not the DID truth oracle.
 
-Show the DID input, strategy selector, and Adaptive readiness label. A fresh
-real runtime should say Adaptive is available but warming up. That is honest:
-availability means the frozen components loaded; readiness requires legitimate
-real observed history. Do not warm real history with demo observations.
+Describe the state as **mined**. Finality was not evaluated.
 
-The acceptance profile is `w3c-basic-v1`. It is structural acceptance—not
-cryptographic verification, consensus, canonical truth, or blockchain proof.
-The audit panel should show a locally recorded receipt, a readable
-`sha256:...` commitment, `Local integrity verified`, and blockchain anchor
-`Not configured`. This proves only receipt integrity. It does not make the DID
-or resolver blockchain-verified. Use **Verify receipt** to recompute the
-stored local receipt and hash-chain integrity through the backend.
+## Frozen controlled-evaluation numbers
 
-## 5. Scenario 1 — Normal
+Use these only if judges ask for quantitative evidence:
 
-Click **Normal** in the CONTROLLED DEMO panel.
+| Metric | Adaptive | Fixed `{local-b, local-c}` | Difference |
+| --- | ---: | ---: | ---: |
+| Success | 0.867045 | 0.834470 | +0.032576 |
+| Calls/request | 1.905303 | 2.000000 | -0.094697 |
 
-Say: “Under healthy controlled conditions, the frozen adaptive policy can use
-a smaller fan-out and avoid unnecessary resolver calls.”
+Label this table **CONTROLLED EVALUATION — NOT REAL-WORLD PERFORMANCE**. Do not
+recompute or regenerate the research campaign.
 
-Show the selected subset, accepted provider, calls used, and calls saved. Use
-the values on screen; do not quote research-run metrics.
+## Screenshot order
 
-## 6. Scenario 2 — Slow / Failure
+1. `docs/audit_screenshots/dashboard_initial.png`
+2. `docs/audit_screenshots/scenario_normal.png`
+3. `docs/audit_screenshots/scenario_slow_failure.png`
+4. `docs/audit_screenshots/scenario_fast_unacceptable.png`
+5. `docs/real_compatibility_screenshots/real_did_key.png`
+6. `docs/real_compatibility_screenshots/real_did_web.png`
+7. `docs/real_compatibility_screenshots/real_did_ethr.png`
+8. Existing Sepolia explorer link in `BLOCKCHAIN_LIVE_EVIDENCE.md`
 
-Click **Slow / Failure**.
+The controlled screenshots also show the local audit receipt panel. The real
+screenshots show compatibility observations with the blockchain anchor safely
+`not configured`; the separate Sepolia evidence came from a controlled-demo
+receipt.
 
-Say: “One controlled resolver is intentionally degraded. Based on isolated
-observed demo history, the existing adaptive policy uses additional paths.”
+## Recovery and shutdown
 
-Show the failed attempt, the alternate accepted result, provider timings, and
-the call count. This demonstrates only the configured scenario.
-
-## 7. Scenario 3 — Fast but Unacceptable
-
-Click **Fast but unacceptable**.
-
-Say: “The fastest response is intentionally unacceptable under the existing
-structural profile. AVDR rejects it and returns the first later acceptable
-result.”
-
-Show that the fast provider has a lower measured latency and `unacceptable`
-state, while the later provider is `accepted` and appears as `Returned by`.
-
-## 8. Recovery if something fails
-
-- **Port occupied:** read the owner printed by the launcher. Do not kill it by
-  port. If it is a known AVDR Docker Compose stack you intentionally started,
-  stop that stack with `docker compose down`; otherwise use alternate ports.
-- **Backend already running:** if it belongs to this launcher, run the stop
-  script first. Otherwise use an alternate backend port.
-- **Session state is stale:** run `./scripts/stop_demo.ps1`. It verifies the
-  recorded executable, module, port, and process start time before stopping a
-  PID. If identity differs, it refuses and retains the state for inspection.
-- **Demo state looks stale:** each scenario starts with fresh controlled
-  history. You can also call `POST /demo/reset`, then rerun the scenario.
-- **Adaptive says warming up:** expected for a fresh real runtime. Controlled
-  scenarios bootstrap only their isolated namespace automatically.
-- **A demo request fails:** check `/health` and each resolver health endpoint,
-  call `/demo/reset`, and retry once. If still failing, stop and restart the
-  presenter stack rather than changing the target or frozen policy.
-
-## 9. Stop service
-
-```powershell
-.\scripts\stop_demo.ps1
-```
-
-The stop helper terminates only PIDs recorded by the launcher after verifying
-their identity. Finish only when it prints:
+- If a port is occupied, use alternate ports; do not stop an unknown process.
+- If a scenario is stale, call `POST /demo/reset` and retry once.
+- If the service remains unhealthy, stop and restart rather than changing the
+  frozen policy or target.
+- Finish with `.\scripts\stop_demo.ps1` and require:
 
 ```text
 RESIDUAL_SERVICE_LISTENERS=0
 AVDR_DEMO_STATUS=STOPPED
 ```
+
+For claim boundaries and judge questions, keep
+[`HACKATHON_EVIDENCE_MATRIX.md`](HACKATHON_EVIDENCE_MATRIX.md) and
+[`JUDGE_QA.md`](JUDGE_QA.md) open.
