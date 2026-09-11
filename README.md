@@ -11,12 +11,11 @@ AVDR은 하나의 Resolver에 의존하거나 모든 Resolver를 항상 호출�
 | 질문 | 답변 |
 | --- | --- |
 | 문제 | single resolver는 장애·지연에 취약하고, all-race는 매 요청마다 최대 fan-out을 사용합니다. |
-| 기존 
-방식 | `single-static`, `sequential-failover`, `all-race`를 비교 기준인 baseline으로 구현했습니다. |
-| 제안 방식 | `adaptive-min-set`이 `q_hat(S \| x)`를 이용해 목표를 만족하는 최소 비용 subset을 선택합니다. |
-| 실행 의미 | 선택된 Resolver를 concurrent하게 호출하고 **First Acceptable Response**를 반환합니다. |
-| 핵심  목표 | 허용 가능한 DID Resolution 결과를 유지하면서 불필요한 request fan-out을 줄이는 것입니다. |
-| 구현  범위 | FastAPI 서비스, dashboard, adaptive runtime, telemetry, audit receipt, controlled qualification, bounded public DID compatibility를 포함합니다. |
+| 기존방식 | `single-static`, `sequential-failover`, `all-race`를 비교 기준인 baseline으로 구현했습니다. |
+| 제안방식 | `adaptive-min-set`이 `q_hat(S \| x)`를 이용해 목표를 만족하는 최소 비용 subset을 선택합니다. |
+| 실행의미 | 선택된 Resolver를 concurrent하게 호출하고 **First Acceptable Response**를 반환합니다. |
+| 핵심목표 | 허용 가능한 DID Resolution 결과를 유지하면서 불필요한 request fan-out을 줄이는 것입니다. |
+| 구현범위 | FastAPI 서비스, dashboard, adaptive runtime, telemetry, audit receipt, controlled qualification, bounded public DID compatibility를 포함합니다. |
 
 ```text
 single resolver        장애 또는 지연이 전체 요청에 직접 영향
