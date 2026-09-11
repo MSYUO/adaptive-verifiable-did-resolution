@@ -16,6 +16,11 @@ AVDR은 하나의 Resolver에 의존하거나 모든 Resolver를 항상 호출�
 | 실행 | 선택된 Resolver를 concurrent하게 호출하고 First Acceptable Response를 반환합니다. |
 | 목표 | 허용 가능한 DID Resolution 결과를 유지하면서 불필요한 request fan-out을 줄이는 것입니다. |
 | 범위 | FastAPI 서비스, dashboard, adaptive runtime, telemetry, audit receipt, controlled qualification, bounded public DID compatibility를 포함합니다. |
+
+```text
+single resolver        장애 또는 지연이 전체 요청에 직접 영향
+all-race               모든 qualified Resolver 호출 = maximum fan-out baseline
+adaptive-min-set       context → estimate → minimum acceptable subset → first acceptable
 ```
 
 ## 문제 정의
